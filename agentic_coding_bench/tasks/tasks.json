@@ -1,0 +1,1148 @@
+[
+  {
+    "id": "P1",
+    "tier": "trivial",
+    "prompt": "Write a Python program that prints 'Hello, World!'.",
+    "tags": [
+      "basics"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P2",
+    "tier": "trivial",
+    "prompt": "Write a Python program that computes 2+2 and prints the result.",
+    "tags": [
+      "basics",
+      "arithmetic"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P3",
+    "tier": "trivial",
+    "prompt": "Write a Python function that takes a string and returns it reversed.",
+    "tags": [
+      "basics",
+      "strings"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P4",
+    "tier": "trivial",
+    "prompt": "Write a Python function that checks whether a given integer is even or odd and returns 'even' or 'odd'.",
+    "tags": [
+      "basics",
+      "conditionals"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P5",
+    "tier": "trivial",
+    "prompt": "Write a Python function that takes a list of integers and returns the largest one.",
+    "tags": [
+      "basics",
+      "lists"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P6",
+    "tier": "trivial",
+    "prompt": "Write a Python function that computes the factorial of a non-negative integer using recursion.",
+    "tags": [
+      "basics",
+      "recursion"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P7",
+    "tier": "trivial",
+    "prompt": "Write a Python function that takes two strings and returns True if they are anagrams.",
+    "tags": [
+      "basics",
+      "strings"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P8",
+    "tier": "trivial",
+    "prompt": "Write a Python function that converts a temperature from Fahrenheit to Celsius.",
+    "tags": [
+      "basics",
+      "arithmetic"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P9",
+    "tier": "trivial",
+    "prompt": "Write a Python function that takes a list and returns a new list with duplicate elements removed, preserving order.",
+    "tags": [
+      "basics",
+      "lists"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P10",
+    "tier": "trivial",
+    "prompt": "Write a Python function that counts the number of vowels in a string.",
+    "tags": [
+      "basics",
+      "strings"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P11",
+    "tier": "easy",
+    "prompt": "Write a Python program that takes a number as a command-line argument and prints whether it is prime.",
+    "tags": [
+      "algorithms",
+      "cli"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P12",
+    "tier": "easy",
+    "prompt": "Write a Python program that reads a text file and counts the frequency of each word, printing the top 10.",
+    "tags": [
+      "file-io",
+      "strings"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P13",
+    "tier": "easy",
+    "prompt": "Write a Python program that implements a basic calculator supporting +, -, *, / with command-line input.",
+    "tags": [
+      "cli",
+      "parsing"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P14",
+    "tier": "easy",
+    "prompt": "Write a Python program that generates a random maze of size 20x20 and prints it as ASCII art.",
+    "tags": [
+      "algorithms",
+      "generation"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P15",
+    "tier": "easy",
+    "prompt": "Write a Python program that implements FizzBuzz for 1 to 100, but also supports custom rules passed as command-line arguments.",
+    "tags": [
+      "cli",
+      "basics"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P16",
+    "tier": "easy",
+    "prompt": "Write a Python program that reads a CSV file and prints each row formatted as a readable table using only the standard library.",
+    "tags": [
+      "file-io",
+      "formatting"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P17",
+    "tier": "easy",
+    "prompt": "Write a Python program that implements binary search on a sorted list and returns the index of a target value.",
+    "tags": [
+      "algorithms",
+      "search"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P18",
+    "tier": "easy",
+    "prompt": "Write a Python program that takes a directory path as argument and lists all files recursively with their sizes, sorted by size descending.",
+    "tags": [
+      "file-io",
+      "cli"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P19",
+    "tier": "easy",
+    "prompt": "Write a Python program that validates email addresses using regex and prints whether each input is valid.",
+    "tags": [
+      "regex",
+      "validation"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P20",
+    "tier": "easy",
+    "prompt": "Write a Python program that generates a random password of a given length with uppercase, lowercase, digits, and symbols.",
+    "tags": [
+      "security",
+      "cli"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P21",
+    "tier": "easy",
+    "prompt": "Write a Python program that implements a simple stack with push, pop, peek, and is_empty operations, with a test demonstrating each.",
+    "tags": [
+      "data-structures"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P22",
+    "tier": "easy",
+    "prompt": "Write a Python program that computes the nth Fibonacci number using memoization.",
+    "tags": [
+      "algorithms",
+      "dynamic-programming"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P23",
+    "tier": "easy",
+    "prompt": "Write a Python program that converts Roman numerals to integers and integers to Roman numerals.",
+    "tags": [
+      "algorithms",
+      "parsing"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P24",
+    "tier": "easy",
+    "prompt": "Write a Python program that reads JSON from stdin, pretty-prints it, and optionally filters by a key path given as an argument.",
+    "tags": [
+      "json",
+      "cli"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P25",
+    "tier": "easy",
+    "prompt": "Write a Python program that implements a simple stopwatch CLI: start, lap, and stop, printing elapsed times.",
+    "tags": [
+      "cli",
+      "timing"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P26",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a simple linked list with insert, delete, search, and reverse operations, with tests demonstrating each.",
+    "tags": [
+      "data-structures",
+      "testing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P27",
+    "tier": "medium",
+    "prompt": "Write a Python program that reads a CSV file, computes basic statistics (mean, median, std dev) for each numeric column, and outputs the results as a formatted table.",
+    "tags": [
+      "data-processing",
+      "statistics"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P28",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a multi-threaded web scraper that downloads the HTML content of 5 URLs concurrently using threading and saves each to a separate file.",
+    "tags": [
+      "concurrency",
+      "networking"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P29",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a simple REST API using Flask with endpoints for CRUD operations on a list of items stored in memory.",
+    "tags": [
+      "web",
+      "api"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P30",
+    "tier": "medium",
+    "prompt": "Write a Python program that parses a JSON file containing nested data and flattens it into a single-level dictionary with dot-notation keys.",
+    "tags": [
+      "json",
+      "algorithms"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P31",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements merge sort and benchmarks it against the built-in sorted() on random lists of sizes 1000, 10000, and 100000.",
+    "tags": [
+      "algorithms",
+      "sorting",
+      "benchmarking"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P32",
+    "tier": "medium",
+    "prompt": "Write a Python program that monitors a directory for new files and prints a notification whenever a new file is created, using polling every 2 seconds.",
+    "tags": [
+      "file-io",
+      "monitoring"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P33",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a simple key-value store with persistence to disk using JSON, supporting get, set, delete, and list commands via CLI.",
+    "tags": [
+      "data-structures",
+      "persistence",
+      "cli"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P34",
+    "tier": "medium",
+    "prompt": "Write a Python program that parses Apache/Nginx access log files and generates a report showing top 10 IPs, top 10 URLs, requests per hour, and error rate.",
+    "tags": [
+      "parsing",
+      "data-processing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P35",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a producer-consumer pattern using asyncio with 3 producers and 2 consumers sharing an asyncio.Queue.",
+    "tags": [
+      "concurrency",
+      "async"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P36",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a basic markdown-to-HTML converter supporting headers, bold, italic, links, code blocks, and unordered lists.",
+    "tags": [
+      "parsing",
+      "text-processing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P37",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a simple SQLite-backed todo app with a CLI interface supporting add, complete, delete, list, and search operations.",
+    "tags": [
+      "database",
+      "cli"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P38",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a rate limiter using the token bucket algorithm, with configurable rate and burst size, and a test that demonstrates it working.",
+    "tags": [
+      "algorithms",
+      "networking",
+      "testing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P39",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a binary search tree with insert, delete, search, and in-order traversal, visualizing the tree structure as ASCII art.",
+    "tags": [
+      "data-structures",
+      "visualization"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P40",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a simple HTTP proxy server that logs all requests passing through it and supports both GET and POST methods.",
+    "tags": [
+      "networking",
+      "web"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P41",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements the A* pathfinding algorithm on a 2D grid with obstacles, displaying the path as ASCII art.",
+    "tags": [
+      "algorithms",
+      "pathfinding"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P42",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a command-line Pomodoro timer with work/break intervals, notifications printed to stdout, and session logging to a file.",
+    "tags": [
+      "cli",
+      "timing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P43",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a trie (prefix tree) supporting insert, search, prefix search, and autocomplete, with a test suite.",
+    "tags": [
+      "data-structures",
+      "testing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P44",
+    "tier": "medium",
+    "prompt": "Write a Python program that reads an image file using Pillow, applies a Gaussian blur, converts to grayscale, and saves the result.",
+    "tags": [
+      "image-processing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P45",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a simple event emitter class (on, off, emit) with support for once listeners and wildcard events, with tests.",
+    "tags": [
+      "design-patterns",
+      "testing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P46",
+    "tier": "medium",
+    "prompt": "Write a Python program that builds a Huffman coding tree for a given text, encodes the text, decodes it back, and prints the compression ratio.",
+    "tags": [
+      "algorithms",
+      "compression"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P47",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a thread-safe object pool with configurable max size, checkout/checkin semantics, and timeout support.",
+    "tags": [
+      "concurrency",
+      "design-patterns"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P48",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a simple diff utility that compares two text files and outputs the differences in unified diff format.",
+    "tags": [
+      "text-processing",
+      "algorithms"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P49",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a cron expression parser that takes a cron string and prints the next 5 execution times.",
+    "tags": [
+      "parsing",
+      "scheduling"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P50",
+    "tier": "medium",
+    "prompt": "Write a Python program that implements a connection pool for HTTP requests using urllib3, with configurable max connections, retry logic, and health checks.",
+    "tags": [
+      "networking",
+      "design-patterns"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P51",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple blockchain with proof-of-work, supporting adding transactions and mining new blocks, with a CLI interface.",
+    "tags": [
+      "cryptography",
+      "data-structures",
+      "cli"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P52",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements an LRU cache from scratch (not using functools) with O(1) get and put operations using a doubly linked list and hash map, with comprehensive tests.",
+    "tags": [
+      "data-structures",
+      "testing"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P53",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a basic Git-like version control system supporting init, add, commit, log, and diff operations on text files.",
+    "tags": [
+      "vcs",
+      "file-io"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P54",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple load balancer that distributes incoming HTTP requests across multiple backend servers using round-robin, with health checks.",
+    "tags": [
+      "networking",
+      "distributed-systems"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P55",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a text-based adventure game engine with rooms, items, inventory, NPCs, and a command parser supporting natural language input.",
+    "tags": [
+      "game-dev",
+      "parsing"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P56",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple database query engine that can parse and execute basic SELECT, WHERE, ORDER BY, and GROUP BY queries on CSV files.",
+    "tags": [
+      "database",
+      "parsing"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P57",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a concurrent file downloader that splits a large file into chunks, downloads them in parallel using asyncio, and reassembles them.",
+    "tags": [
+      "concurrency",
+      "networking",
+      "async"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P58",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple neural network from scratch (no frameworks) that can learn XOR, with forward propagation, backpropagation, and a training loop.",
+    "tags": [
+      "ml",
+      "algorithms"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P59",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a pub/sub message broker supporting topic-based routing, wildcard subscriptions, message persistence, and multiple subscribers using asyncio.",
+    "tags": [
+      "messaging",
+      "async",
+      "distributed-systems"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P60",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple regex engine supporting literal characters, . (any), * (zero or more), + (one or more), ? (optional), and character classes like [a-z], with a test suite.",
+    "tags": [
+      "algorithms",
+      "parsing",
+      "testing"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P61",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a task scheduler that can schedule functions to run at specific times or intervals, with support for cron expressions and task dependencies.",
+    "tags": [
+      "scheduling",
+      "concurrency"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P62",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a distributed key-value store using consistent hashing across multiple simulated nodes with replication factor 3.",
+    "tags": [
+      "distributed-systems",
+      "algorithms"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P63",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple compiler for a calculator language supporting variables, arithmetic, comparisons, and if/else, targeting a stack-based VM that you also implement.",
+    "tags": [
+      "compilers",
+      "vm"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P64",
+    "tier": "hard",
+    "prompt": "Write a Python web application using Flask that implements a URL shortener with a SQLite backend, including click analytics, expiration dates, and custom aliases.",
+    "tags": [
+      "web",
+      "database"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P65",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple search engine: crawl a set of local HTML files, build an inverted index, and support TF-IDF ranked search queries via CLI.",
+    "tags": [
+      "search",
+      "algorithms",
+      "text-processing"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P66",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a WebSocket chat server with rooms, private messages, user presence tracking, and message history using asyncio.",
+    "tags": [
+      "networking",
+      "async",
+      "web"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P67",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple map-reduce framework that can process large text files in parallel across multiple processes, with a word count and inverted index example.",
+    "tags": [
+      "distributed-systems",
+      "concurrency"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P68",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a full JSON parser from scratch (no json module) supporting strings, numbers, booleans, null, arrays, objects, and escaped characters.",
+    "tags": [
+      "parsing",
+      "algorithms"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P69",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a connection-oriented protocol on top of UDP sockets with reliability (ACK/retransmit), ordering, and flow control.",
+    "tags": [
+      "networking",
+      "protocols"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P70",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a simple code formatter for Python source files that normalizes indentation, enforces line length, and sorts imports.",
+    "tags": [
+      "text-processing",
+      "parsing"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P71",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a Raft consensus algorithm simulation with leader election, log replication, and fault tolerance across 5 simulated nodes.",
+    "tags": [
+      "distributed-systems",
+      "algorithms"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P72",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a CLI tool for managing database migrations, supporting create, up, down, and status commands against a SQLite database.",
+    "tags": [
+      "database",
+      "cli"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P73",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements an HTTP/1.1 server from scratch using only sockets, supporting GET, POST, static file serving, and chunked transfer encoding.",
+    "tags": [
+      "networking",
+      "protocols",
+      "web"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P74",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a generic data pipeline framework with configurable stages (extract, transform, load), error handling, retries, and progress reporting.",
+    "tags": [
+      "data-processing",
+      "design-patterns"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P75",
+    "tier": "hard",
+    "prompt": "Write a Python program that implements a memory allocator simulation with first-fit, best-fit, and worst-fit strategies, including fragmentation analysis and visualization.",
+    "tags": [
+      "systems",
+      "algorithms",
+      "visualization"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P76",
+    "tier": "expert",
+    "prompt": "Write a full-stack Python web application: a project management tool with FastAPI backend, SQLite database, user authentication via JWT, CRUD for projects and tasks, and a simple HTML frontend. Include database migrations, input validation, error handling, and tests.",
+    "tags": [
+      "web",
+      "fullstack",
+      "database",
+      "testing"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P77",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a peer-to-peer file sharing system using asyncio sockets, with peer discovery via UDP broadcast, file chunking, parallel transfer from multiple peers, and integrity verification via SHA-256.",
+    "tags": [
+      "distributed-systems",
+      "networking",
+      "async"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P78",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a real-time collaborative text editor backend using WebSockets and operational transformation for conflict resolution, with support for multiple documents and cursor positions.",
+    "tags": [
+      "web",
+      "distributed-systems",
+      "algorithms"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P79",
+    "tier": "expert",
+    "prompt": "Write a Python monitoring dashboard: a web server that collects system metrics (CPU, memory, disk, network) every 5 seconds, stores them in SQLite, and serves a dashboard page with auto-refreshing charts rendered as inline SVG.",
+    "tags": [
+      "web",
+      "monitoring",
+      "database",
+      "visualization"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P80",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a WebSocket-based multiplayer tic-tac-toe game server supporting multiple concurrent games, matchmaking, game state synchronization, spectating, and a rematch system.",
+    "tags": [
+      "game-dev",
+      "networking",
+      "async"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P81",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a simple DNS server that can resolve A and AAAA records, supports a zone file format, caching with TTL, and forwards unknown queries to an upstream DNS server.",
+    "tags": [
+      "networking",
+      "protocols",
+      "systems"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P82",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a complete LSP (Language Server Protocol) server for a simple custom language, supporting diagnostics, completion, hover, go-to-definition, and formatting.",
+    "tags": [
+      "protocols",
+      "parsing",
+      "dev-tools"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P83",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a distributed task queue with a broker, multiple workers, task priorities, retries with exponential backoff, dead letter queue, and result storage in SQLite.",
+    "tags": [
+      "distributed-systems",
+      "concurrency",
+      "database"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P84",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a Git server supporting the git smart HTTP protocol, allowing git clone, push, and pull operations for repositories stored on the local filesystem.",
+    "tags": [
+      "vcs",
+      "networking",
+      "protocols"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P85",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a complete Markdown rendering pipeline: parse Markdown to an AST, transform the AST (auto-link URLs, syntax highlight code blocks), and render to HTML. Include a test suite with edge cases.",
+    "tags": [
+      "parsing",
+      "text-processing",
+      "testing"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P86",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a container runtime prototype that uses Linux namespaces (PID, mount, network) and cgroups to create isolated environments for running commands, with a CLI similar to docker run.",
+    "tags": [
+      "systems",
+      "containers",
+      "cli"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P87",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a type checker for a simple statically-typed language with integers, strings, booleans, functions, arrays, and user-defined structs. Include type inference for local variables.",
+    "tags": [
+      "compilers",
+      "type-systems"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P88",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a complete OAuth 2.0 authorization server supporting the authorization code flow, PKCE, token refresh, token revocation, and client registration, with a SQLite backend.",
+    "tags": [
+      "security",
+      "web",
+      "protocols"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P89",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements an ETL pipeline framework with a DAG-based task scheduler, parallel execution, dependency resolution, checkpointing, and a web UI showing pipeline status.",
+    "tags": [
+      "data-processing",
+      "web",
+      "scheduling"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P90",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a simple log-structured merge-tree (LSM-tree) storage engine with memtable, SSTables, compaction, bloom filters, and a key-value API supporting get, put, delete, and range scans.",
+    "tags": [
+      "database",
+      "data-structures",
+      "systems"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P91",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a complete RESP (Redis Serialization Protocol) server supporting strings, lists, hashes, sets, TTL expiry, pub/sub, and persistence via append-only file.",
+    "tags": [
+      "database",
+      "networking",
+      "protocols"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P92",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a service mesh sidecar proxy: intercept HTTP traffic, add distributed tracing headers, collect latency metrics, implement circuit breaking, and retry failed requests.",
+    "tags": [
+      "networking",
+      "distributed-systems",
+      "monitoring"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P93",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a complete testing framework from scratch: test discovery, assertions, fixtures with setup/teardown, parameterized tests, test selection by pattern, and JUnit XML output.",
+    "tags": [
+      "testing",
+      "dev-tools",
+      "cli"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P94",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a bytecode compiler and virtual machine for a subset of Python supporting variables, arithmetic, functions, if/else, while loops, lists, and dictionaries.",
+    "tags": [
+      "compilers",
+      "vm",
+      "languages"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P95",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a production-grade API gateway: request routing, rate limiting per client, JWT authentication, request/response transformation, caching, and health check aggregation across backends.",
+    "tags": [
+      "web",
+      "networking",
+      "security"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P96",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a time-series database with an HTTP API: ingest data points with timestamps and tags, support downsampling aggregation queries (avg, min, max, sum over time windows), and store data in a columnar format on disk.",
+    "tags": [
+      "database",
+      "web",
+      "data-processing"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P97",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a complete static site generator: read Markdown files with YAML front matter, apply Jinja2 templates, generate HTML pages, handle assets, support custom themes, and include a live-reload dev server.",
+    "tags": [
+      "web",
+      "text-processing",
+      "dev-tools"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P98",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a distributed lock service using a Paxos-like consensus protocol across 5 simulated nodes, with lock acquisition, release, TTL-based expiry, fencing tokens, and partition tolerance.",
+    "tags": [
+      "distributed-systems",
+      "algorithms",
+      "protocols"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P99",
+    "tier": "expert",
+    "prompt": "Write a Python program that implements a complete workflow engine: define workflows as YAML DAGs with conditional branches, parallel execution, retries, timeouts, human approval steps, and a web dashboard showing execution history.",
+    "tags": [
+      "scheduling",
+      "web",
+      "distributed-systems"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P100",
+    "tier": "expert",
+    "prompt": "Write a complete Python web application that serves an interactive globe visualization. Use an HTML page with an SVG world map that rotates via CSS animation. When a user clicks anywhere on the map, compute the nearest major city using the Haversine formula and display its name, country, population, and local time. Include at least 50 cities, a FastAPI backend for the city lookup API, and make the UI responsive.",
+    "tags": [
+      "web",
+      "fullstack",
+      "visualization",
+      "geo"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P101",
+    "tier": "trivial",
+    "prompt": "Write a TypeScript function that takes an array of numbers and returns the second largest element without sorting the entire array.",
+    "tags": [
+      "typescript",
+      "algorithms"
+    ],
+    "max_output_tokens": 256
+  },
+  {
+    "id": "P102",
+    "tier": "easy",
+    "prompt": "Write a Rust function that reads a CSV file and returns a Vec of structs. Handle errors with Result types, support quoted fields, and skip empty lines.",
+    "tags": [
+      "rust",
+      "file-io",
+      "parsing"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P103",
+    "tier": "easy",
+    "prompt": "Write a Go HTTP handler that accepts JSON POST requests, validates required fields using struct tags, and returns appropriate error responses with status codes.",
+    "tags": [
+      "go",
+      "web",
+      "validation"
+    ],
+    "max_output_tokens": 512
+  },
+  {
+    "id": "P104",
+    "tier": "medium",
+    "prompt": "Write a TypeScript Express.js middleware that implements rate limiting per API key using a sliding window algorithm. Store counters in a Map with TTL-based cleanup.",
+    "tags": [
+      "typescript",
+      "web",
+      "algorithms"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P105",
+    "tier": "medium",
+    "prompt": "Write a Rust program that implements a concurrent web scraper using tokio. It should accept a list of URLs, fetch them in parallel with a configurable concurrency limit, extract all links, and report broken ones.",
+    "tags": [
+      "rust",
+      "async",
+      "networking"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P106",
+    "tier": "medium",
+    "prompt": "Write SQL queries to design and populate a normalized schema for an e-commerce platform (users, products, orders, reviews). Include queries for: top 10 products by revenue, users who bought all products in a category, and a materialized view for the product recommendation engine.",
+    "tags": [
+      "sql",
+      "database",
+      "data-processing"
+    ],
+    "max_output_tokens": 1024
+  },
+  {
+    "id": "P107",
+    "tier": "hard",
+    "prompt": "Write a Go program that implements a TCP chat server with multiple rooms. Support: room creation/joining/leaving, private messages, user nicknames, graceful disconnection handling, and a /help command. Use goroutines for each client connection.",
+    "tags": [
+      "go",
+      "networking",
+      "concurrency"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P108",
+    "tier": "hard",
+    "prompt": "Write a Rust library that implements a B-tree with configurable branching factor. Support insert, delete, search, range queries, and iteration. Include proper memory management without unsafe code.",
+    "tags": [
+      "rust",
+      "data-structures",
+      "algorithms"
+    ],
+    "max_output_tokens": 2048
+  },
+  {
+    "id": "P109",
+    "tier": "expert",
+    "prompt": "Write a TypeScript full-stack application using Next.js that implements a real-time collaborative Markdown editor. Use WebSocket for live cursor positions and text sync via operational transform. Include user presence indicators, conflict resolution, and document persistence to SQLite.",
+    "tags": [
+      "typescript",
+      "fullstack",
+      "web",
+      "concurrency"
+    ],
+    "max_output_tokens": 4096
+  },
+  {
+    "id": "P110",
+    "tier": "expert",
+    "prompt": "Write a Rust program that implements a simple database query engine. Parse a subset of SQL (SELECT, WHERE, JOIN, GROUP BY, ORDER BY), build a query plan as a tree of iterators, and execute it against CSV files as tables. Support hash joins and external merge sort for large datasets.",
+    "tags": [
+      "rust",
+      "database",
+      "compilers",
+      "algorithms"
+    ],
+    "max_output_tokens": 4096
+  }
+]

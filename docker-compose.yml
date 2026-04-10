@@ -1,0 +1,44 @@
+services:
+  agentic-coding-bench:
+    build: .
+    image: swarmone/agentic-coding-bench:latest
+    volumes:
+      - ./results:/results
+    environment:
+      ACB_ENDPOINT: ${ACB_ENDPOINT:-http://host.docker.internal:8000}
+      ACB_MODEL: ${ACB_MODEL:-default}
+      ACB_API_KEY: ${ACB_API_KEY:-}
+    command:
+      - speed
+      - -e
+      - ${ACB_ENDPOINT:-http://host.docker.internal:8000}
+      - -m
+      - ${ACB_MODEL:-default}
+      - --suite
+      - quick
+      - -o
+      - /results/report.md
+
+  proxy:
+    build: .
+    image: swarmone/agentic-coding-bench:latest
+    ports:
+      - "19000:19000"
+    environment:
+      ACB_ENDPOINT: ${ACB_ENDPOINT:-http://host.docker.internal:8000}
+      ACB_MODEL: ${ACB_MODEL:-default}
+      ACB_API_KEY: ${ACB_API_KEY:-}
+    volumes:
+      - ./traces:/traces
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        from agentic_coding_bench.proxy.server import run_proxy
+        import os
+        run_proxy(
+            upstream_url=os.environ.get('ACB_ENDPOINT', 'http://host.docker.internal:8000'),
+            port=19000,
+            model=os.environ.get('ACB_MODEL', 'default'),
+            api_key=os.environ.get('ACB_API_KEY', ''),
+            log_dir='/traces',
+        )

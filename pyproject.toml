@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentic-coding-bench"
+version = "1.0.0"
+description = "Open-source benchmark for LLM inference on agentic coding workloads"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    { name = "SwarmOne", email = "eng@swarmone.ai" },
+]
+keywords = ["benchmark", "llm", "inference", "vllm", "coding", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "click>=8.0",
+    "httpx>=0.25",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+proxy = [
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+agentic-coding-bench = "agentic_coding_bench.cli:main"
+acb = "agentic_coding_bench.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/swarmone/agentic-coding-bench"
+Repository = "https://github.com/swarmone/agentic-coding-bench"
+Issues = "https://github.com/swarmone/agentic-coding-bench/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
