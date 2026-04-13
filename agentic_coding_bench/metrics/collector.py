@@ -7,6 +7,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+_CONTEXT_LENGTH_PATTERNS = [
+    "prompt is too long",
+    "maximum context length",
+    "context_length_exceeded",
+    "token limit",
+    "too many tokens",
+    "exceeds the model's maximum",
+    "input is too long",
+    "max_prompt_length",
+    "reduce your prompt",
+    "maximum allowed",
+]
+
+
+def is_context_length_error(error: str | None) -> bool:
+    """Return True if the error string indicates the prompt exceeded the model's context window."""
+    if not error:
+        return False
+    lower = error.lower()
+    return any(p in lower for p in _CONTEXT_LENGTH_PATTERNS)
+
 
 @dataclass
 class RequestMetrics:

@@ -250,3 +250,102 @@ def test_bucket_label_thresholds():
     assert _bucket_label(299_999) == "xl"
     assert _bucket_label(300_000) == "xxl"
     assert _bucket_label(1_000_000) == "xxl"
+
+
+# --- Replay with model_context_length ---
+
+
+def _make_varied_workload_file(tmp_path):
+    """Create a workload with entries of varying sizes for context-length filtering tests."""
+    path = tmp_path / "varied.jsonl"
+    entries = [
+        {
+            "seq": 1,
+            "experiment_id": "test",
+            "messages": [{"role": "user", "content": "x" * 100}],
+            "model": "test-model",
+            "max_tokens": 64,
+        },
+        {
+            "seq": 2,
+            "experiment_id": "test",
+            "messages": [{"role": "user", "content": "x" * 80_000}],
+            "model": "test-model",
+            "max_tokens": 64,
+        },
+        {
+            "seq": 3,
+            "experiment_id": "test",
+            "messages": [{"role": "user", "content": "x" * 200_000}],
+            "model": "test-model",
+            "max_tokens": 64,
+        },
+    ]
+    with open(path, "w") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+    return str(path)
+
+
+def test_replay_user_session_skips_oversized_requests(tmp_path):
+    """_replay_user_session should skip entries exceeding model_context_length."""
+    import asyncio
+    from agentic_coding_bench.workloads.player import _replay_user_session
+    from agentic_coding_bench.workloads.registry import load_workload
+
+    path = _make_varied_workload_file(tmp_path)
+    wl = load_workload(path)
+
+    completed = []
+
+    async def run():
+        import httpx
+        async with httpx.AsyncClient() as client:
+            return await _replay_user_session(
+                client=client,
+                url="http://127.0.0.1:1/unused",
+                model_override="test-model",
+                headers={},
+                entries=wl.entries,
+                timeout=1.0,
+                user_id=0,
+                on_complete=lambda: completed.append(1),
+                model_context_length=10_000,
+            )
+
+    results = asyncio.run(run())
+
+    assert len(results) == 1
+    assert len(completed) == 3
+
+
+def test_replay_user_session_no_skip_without_limit(tmp_path):
+    """Without model_context_length, _replay_user_session attempts all entries."""
+    import asyncio
+    from agentic_coding_bench.workloads.player import _replay_user_session
+    from agentic_coding_bench.workloads.registry import load_workload
+
+    path = _make_varied_workload_file(tmp_path)
+    wl = load_workload(path)
+
+    completed = []
+
+    async def run():
+        import httpx
+        async with httpx.AsyncClient() as client:
+            return await _replay_user_session(
+                client=client,
+                url="http://127.0.0.1:1/unused",
+                model_override="test-model",
+                headers={},
+                entries=wl.entries,
+                timeout=0.5,
+                user_id=0,
+                on_complete=lambda: completed.append(1),
+                model_context_length=None,
+            )
+
+    results = asyncio.run(run())
+
+    assert len(results) == 3
+    assert len(completed) == 3

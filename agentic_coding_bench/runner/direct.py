@@ -26,6 +26,7 @@ from agentic_coding_bench.metrics.collector import (
     BenchmarkRun,
     RequestMetrics,
     ScenarioResult,
+    is_context_length_error,
 )
 from agentic_coding_bench.metrics.stats import ScenarioStats, analyze_scenario
 from agentic_coding_bench.tasks.context.codebase_context import build_messages
@@ -372,13 +373,20 @@ def _print_failure_details(failures: list) -> None:
     """Print why requests failed, grouped by reason."""
     empty_response = [r for r in failures if r.error is None]
     with_error = [r for r in failures if r.error is not None]
+    ctx_len = [r for r in with_error if is_context_length_error(r.error)]
+    other_error = [r for r in with_error if not is_context_length_error(r.error)]
 
     if empty_response:
         console.print(
             f"    [{WARN_COLOR}]{len(empty_response)} empty response "
             f"- check model name, max_tokens, or content policy[/{WARN_COLOR}]"
         )
-    for r in with_error:
+    if ctx_len:
+        console.print(
+            f"    [{WARN_COLOR}]{len(ctx_len)} request(s) exceeded the model's"
+            f" context window — use --model-context-length to skip them[/{WARN_COLOR}]"
+        )
+    for r in other_error:
         console.print(f"    [{ERR_COLOR}]✗ {r.task_id}: {r.error[:120]}[/{ERR_COLOR}]")
 
 
@@ -722,4 +730,20 @@ def _print_summary_table(run: BenchmarkRun) -> None:
         console.print(
             f"\n  [{color} bold]{label}[/{color} bold]  "
             f"[{DIM}]at {verdict_stats.context_profile} context[/{DIM}]"
+        )
+
+    ctx_len_failures = sum(
+        1
+        for s in run.scenarios
+        for r in s.failures
+        if is_context_length_error(r.error)
+    )
+    if ctx_len_failures:
+        console.print(
+            f"\n  [{WARN_COLOR}]⚠  {ctx_len_failures} request(s) failed because the"
+            f" prompt exceeded the model's context window.[/{WARN_COLOR}]"
+        )
+        console.print(
+            f"  [{WARN_COLOR}]   Use [bold]--model-context-length N[/bold]"
+            f" to skip scenarios that exceed N tokens.[/{WARN_COLOR}]"
         )

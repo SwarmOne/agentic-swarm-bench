@@ -410,10 +410,16 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     "--users", "-u", type=int, default=1,
     help="Number of concurrent users replaying the workload (default: 1)",
 )
+@click.option(
+    "--model-context-length",
+    type=int,
+    default=None,
+    help="Model's max context window in tokens. Skips requests whose prompt exceeds it.",
+)
 @click.pass_context
 def replay(
     ctx, endpoint, model, api_key, api_key_header,
-    workload, output, timeout, slice_tokens, dry_run, users,
+    workload, output, timeout, slice_tokens, dry_run, users, model_context_length,
 ):
     """Replay a recorded workload against any endpoint.
 
@@ -433,11 +439,16 @@ def replay(
     in their original recorded order.
 
     \b
+    Use --model-context-length to skip individual requests whose prompt
+    exceeds the model's context window (avoids 400 errors from the API).
+
+    \b
     Examples:
       acb replay -e http://localhost:8000 -m my-model -w session.jsonl
       acb replay -e http://localhost:8000 -m my-model -w session.jsonl -u 4
       acb replay -e http://new-server:8000 -m my-model -w session.jsonl -o report.md
       acb replay -e URL -m MODEL -w session.jsonl --slice-tokens 1000000
+      acb replay -e URL -m MODEL -w session.jsonl --model-context-length 4096
     """
     from agentic_coding_bench.workloads.player import replay_workload
 
@@ -454,7 +465,12 @@ def replay(
         },
     )
 
-    asyncio.run(replay_workload(cfg, workload, slice_tokens=slice_tokens, num_users=users))
+    asyncio.run(replay_workload(
+        cfg, workload,
+        slice_tokens=slice_tokens,
+        num_users=users,
+        model_context_length=model_context_length,
+    ))
 
 
 @main.command("list-workloads")

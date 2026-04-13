@@ -27,6 +27,7 @@ from agentic_coding_bench.metrics.collector import (
     BenchmarkRun,
     RequestMetrics,
     ScenarioResult,
+    is_context_length_error,
 )
 from agentic_coding_bench.metrics.stats import analyze_scenario
 from agentic_coding_bench.workloads.registry import Workload, get_workload
@@ -221,12 +222,19 @@ async def _replay_user_session(
     timeout: float,
     user_id: int,
     on_complete=None,
+    model_context_length: int | None = None,
 ) -> list[RequestMetrics]:
     """Replay one full user session sequentially, returning all metrics."""
     results = []
     for entry in entries:
-        model = model_override or entry.model
         tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+
+        if model_context_length is not None and tokens > model_context_length:
+            if on_complete:
+                on_complete()
+            continue
+
+        model = model_override or entry.model
         m = await _replay_one_request(
             client=client,
             url=url,
@@ -251,6 +259,7 @@ async def replay_workload(
     *,
     slice_tokens: int | None = None,
     num_users: int = 1,
+    model_context_length: int | None = None,
 ) -> BenchmarkRun:
     """Replay a recorded workload against the configured endpoint."""
     workload = get_workload(workload_path)
@@ -274,6 +283,8 @@ async def replay_workload(
             f"  Sliced: {workload.total_requests}/{original_count}"
             f" requests (≤{slice_tokens:,} prompt tokens)"
         )
+    if model_context_length is not None:
+        console.print(f"  Model context length: {model_context_length:,} tokens")
     console.print(f"  Approx tokens: {workload.total_tokens_approx:,} per user")
     console.rule()
 
@@ -289,9 +300,15 @@ async def replay_workload(
     )
 
     if num_users <= 1:
-        await _replay_single_user(config, workload, url, headers, run)
+        await _replay_single_user(
+            config, workload, url, headers, run,
+            model_context_length=model_context_length,
+        )
     else:
-        await _replay_multi_user(config, workload, url, headers, run, num_users)
+        await _replay_multi_user(
+            config, workload, url, headers, run, num_users,
+            model_context_length=model_context_length,
+        )
 
     console.rule()
     _print_replay_summary(run, workload, num_users)
@@ -308,9 +325,12 @@ async def _replay_single_user(
     url: str,
     headers: dict,
     run: BenchmarkRun,
+    *,
+    model_context_length: int | None = None,
 ) -> None:
     """Sequential replay: one user, in original workload order."""
     total = len(workload.entries)
+    skipped = 0
 
     with Progress(
         SpinnerColumn(),
@@ -328,6 +348,12 @@ async def _replay_single_user(
             for entry in workload.entries:
                 tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
                 label = _bucket_label(tokens)
+
+                if model_context_length is not None and tokens > model_context_length:
+                    skipped += 1
+                    progress.advance(task_id)
+                    continue
+
                 model = config.model or entry.model
                 m = await _replay_one_request(
                     client=client,
@@ -345,6 +371,12 @@ async def _replay_single_user(
                 all_results.append((m, label, tokens))
 
         progress.remove_task(task_id)
+
+    if skipped:
+        console.print(
+            f"\n  [dim]Skipped {skipped} request(s) exceeding"
+            f" model context length ({model_context_length:,} tokens)[/dim]"
+        )
 
     buckets: dict[str, list[tuple[RequestMetrics, int]]] = {}
     for m, label, tokens in all_results:
@@ -364,7 +396,7 @@ async def _replay_single_user(
         run.scenarios.append(scenario)
 
         stats = analyze_scenario(scenario)
-        _print_bucket_stats(bucket_label, stats, num_users=1)
+        _print_bucket_stats(bucket_label, stats, num_users=1, scenario=scenario)
 
 
 async def _replay_multi_user(
@@ -374,6 +406,8 @@ async def _replay_multi_user(
     headers: dict,
     run: BenchmarkRun,
     num_users: int,
+    *,
+    model_context_length: int | None = None,
 ) -> None:
     """Concurrent replay: N users each replay the full session in parallel."""
     total_requests = workload.total_requests * num_users
@@ -403,6 +437,7 @@ async def _replay_multi_user(
                     timeout=config.timeout,
                     user_id=uid,
                     on_complete=lambda: progress.advance(task_id),
+                    model_context_length=model_context_length,
                 )
                 for uid in range(num_users)
             ]
@@ -413,6 +448,15 @@ async def _replay_multi_user(
     flat_results: list[RequestMetrics] = []
     for user_results in all_results:
         flat_results.extend(user_results)
+
+    if model_context_length is not None:
+        total_entries = len(workload.entries) * num_users
+        skipped = total_entries - len(flat_results)
+        if skipped > 0:
+            console.print(
+                f"\n  [dim]Skipped {skipped} request(s) exceeding"
+                f" model context length ({model_context_length:,} tokens)[/dim]"
+            )
 
     buckets: dict[str, list[RequestMetrics]] = {}
     for m in flat_results:
@@ -432,12 +476,22 @@ async def _replay_multi_user(
         run.scenarios.append(scenario)
 
         stats = analyze_scenario(scenario)
-        _print_bucket_stats(bucket_label, stats, num_users=num_users)
+        _print_bucket_stats(bucket_label, stats, num_users=num_users, scenario=scenario)
 
 
-def _print_bucket_stats(label: str, stats, *, num_users: int = 1) -> None:
+def _print_bucket_stats(
+    label: str,
+    stats,
+    *,
+    num_users: int = 1,
+    scenario: ScenarioResult | None = None,
+) -> None:
     if stats.successful == 0:
         console.print(f"\n  [red]{label}: all {stats.total_requests} requests failed[/red]")
+        if scenario and any(is_context_length_error(r.error) for r in scenario.failures):
+            console.print(
+                "         [yellow]↳ prompt exceeded model's context window[/yellow]"
+            )
         return
 
     user_info = f" ({num_users}u)" if num_users > 1 else ""
@@ -451,6 +505,15 @@ def _print_bucket_stats(label: str, stats, *, num_users: int = 1) -> None:
 
 def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int = 1) -> None:
     from rich.table import Table
+
+    if not run.scenarios:
+        console.print(
+            "\n  [yellow]No requests were sent — all were skipped or filtered out.[/yellow]"
+        )
+        console.print(
+            "  [yellow]Try a larger --model-context-length or a different workload.[/yellow]"
+        )
+        return
 
     title = f"Replay: {workload.name} -> {run.model}"
     if num_users > 1:
@@ -486,6 +549,23 @@ def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int 
             table.add_row(*row)
 
     console.print(table)
+
+    ctx_len_failures = sum(
+        1
+        for s in run.scenarios
+        for r in s.failures
+        if is_context_length_error(r.error)
+    )
+    if ctx_len_failures:
+        console.print(
+            f"\n  [yellow]⚠  {ctx_len_failures} request(s) failed because the prompt"
+            f" exceeded the model's context window.[/yellow]"
+        )
+        console.print(
+            "  [yellow]   Use [bold]--model-context-length N[/bold] to skip"
+            " requests that exceed N tokens, or [bold]--slice-tokens N[/bold]"
+            " to cap cumulative prompt size.[/yellow]"
+        )
 
 
 def _print_replay_dry_run(workload: Workload, url: str, num_users: int = 1) -> None:
