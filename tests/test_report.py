@@ -4,6 +4,7 @@ from agentic_coding_bench.metrics.collector import BenchmarkRun, RequestMetrics,
 from agentic_coding_bench.metrics.stats import DistributionStats, ScenarioStats
 from agentic_coding_bench.report.markdown import (
     _base_profile,
+    _experience_label,
     _grade,
     _grade_icon,
     _verdict_for_stats,
@@ -203,9 +204,10 @@ def test_generate_report_contains_key_findings():
     assert "Key Findings" in report
 
 
-def test_generate_report_contains_ux_mapping():
+def test_generate_report_contains_experience_column():
     report = generate_report(_make_run())
-    assert "What This Means for Agentic Coding" in report
+    assert "Experience" in report
+    assert "streaming" in report
 
 
 def test_generate_report_contains_performance_grades():
@@ -274,18 +276,23 @@ def test_generate_report_all_failures_no_key_findings():
     assert "Key Findings" not in report
 
 
-def test_generate_report_all_failures_no_ux_mapping():
+def test_generate_report_all_failures_no_experience():
     report = generate_report(_make_all_failures_run())
-    assert "What This Means for Agentic Coding" not in report
+    assert "streaming" not in report
 
 
 # --- Edge case: single profile skips per-profile section ---
 
 
-def test_single_profile_skips_per_profile_section():
-    run = _make_run()
-    report = generate_report(run)
-    assert "Per-Profile Breakdown" not in report
+def test_results_table_has_completed_column():
+    report = generate_report(_make_run())
+    assert "Completed" in report
+    assert "Status" not in report.split("Methodology")[0]
+
+
+def test_results_table_has_output_tok_column():
+    report = generate_report(_make_run())
+    assert "Output tok" in report
 
 
 # --- Edge case: thinking tokens ---
@@ -541,3 +548,32 @@ def test_report_with_cache_defeat():
     report = generate_report(run)
     assert "Enabled" in report
     assert "unique random salt" in report
+
+
+# --- Experience label tests ---
+
+
+class TestExperienceLabel:
+    def test_instant_fast(self):
+        label = _experience_label(500, 60)
+        assert "Instant" in label
+        assert "fast streaming" in label
+
+    def test_responsive_smooth(self):
+        label = _experience_label(2000, 35)
+        assert "Responsive" in label
+        assert "smooth streaming" in label
+
+    def test_noticeable_slow(self):
+        label = _experience_label(7000, 20)
+        assert "Noticeable wait" in label
+        assert "slow streaming" in label
+
+    def test_disruptive_sluggish(self):
+        label = _experience_label(12000, 10)
+        assert "Disruptive" in label
+        assert "sluggish" in label
+
+    def test_slight_pause(self):
+        label = _experience_label(4000, 60)
+        assert "Slight pause" in label

@@ -95,10 +95,8 @@ def generate_report(run: BenchmarkRun, json_path: str | None = None) -> str:
         _verdict_section(all_stats),
         _key_findings_section(all_stats),
         _summary_table(run, all_stats),
-        _ux_mapping_section(all_stats),
         _context_scaling_section(all_stats),
         _concurrency_scaling_section(all_stats),
-        _per_profile_section(run, all_stats),
         _methodology_section(run),
     ]
     return "\n".join(s for s in sections if s)
@@ -229,14 +227,39 @@ def _key_findings_section(all_stats: list[tuple]) -> str:
     return "\n".join(lines)
 
 
+def _experience_label(ttft: float, toks: float) -> str:
+    """Human-readable UX description for a given TTFT and tok/s."""
+    if ttft < 1000:
+        ttft_feel = "instant"
+    elif ttft < 3000:
+        ttft_feel = "responsive"
+    elif ttft < 5000:
+        ttft_feel = "slight pause"
+    elif ttft < 10000:
+        ttft_feel = "noticeable wait"
+    else:
+        ttft_feel = "disruptive"
+
+    if toks > 50:
+        toks_feel = "fast streaming"
+    elif toks > 30:
+        toks_feel = "smooth streaming"
+    elif toks > 15:
+        toks_feel = "slow streaming"
+    else:
+        toks_feel = "sluggish"
+
+    return f"{ttft_feel.capitalize()}, {toks_feel}"
+
+
 def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
     header = (
         "| | Users | Context | Avg prompt | Tok/s (med) | TTFT p50 | TTFT p99 "
-        "| ITL p50 | Agg tok/s | Status |"
+        "| ITL p50 | Agg tok/s | Output tok | Completed | Experience |"
     )
     sep = (
         "|:-:|------:|--------:|-----------:|------------:|---------:|---------:"
-        "|--------:|----------:|-------:|"
+        "|--------:|----------:|-----------:|----------:|------------|"
     )
     lines = ["## Results\n", header, sep]
 
@@ -244,13 +267,14 @@ def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
         if stats.successful == 0:
             lines.append(
                 f"| {_grade_icon('poor')} | {stats.num_users} | {stats.context_profile} "
-                f"| - | FAIL | - | - | - | - "
-                f"| 0/{stats.total_requests} |"
+                f"| - | FAIL | - | - | - | - | - "
+                f"| 0/{stats.total_requests} | - |"
             )
             continue
 
         verdict = _verdict_for_stats(stats)
         prompt_str = _fmt_tokens(stats.avg_prompt_tokens)
+        experience = _experience_label(stats.ttft_ms.median, stats.tok_per_sec.median)
         lines.append(
             f"| {_grade_icon(verdict)} | {stats.num_users} | {stats.context_profile} | "
             f"{prompt_str} | "
@@ -259,7 +283,9 @@ def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
             f"{_fmt_ms(stats.ttft_ms.p99)} ms | "
             f"{stats.itl_ms.median:.1f} ms | "
             f"{stats.aggregate_tok_per_sec:.0f} | "
-            f"{stats.successful}/{stats.total_requests} |"
+            f"{stats.output_tokens.median:.0f} | "
+            f"{stats.successful}/{stats.total_requests} | "
+            f"{experience} |"
         )
 
     lines.append("")
@@ -267,60 +293,6 @@ def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
     if run.has_thinking:
         lines.extend(_thinking_section(run))
 
-    return "\n".join(lines)
-
-
-def _ux_mapping_section(all_stats: list[tuple]) -> str:
-    successful = [(s, st) for s, st in all_stats if st.successful > 0]
-    if not successful:
-        return ""
-
-    lines = [
-        "## What This Means for Agentic Coding\n",
-        "| Scenario | TTFT | Decode | Experience |",
-        "|----------|-----:|-------:|------------|",
-    ]
-
-    for _, stats in successful:
-        ttft = stats.ttft_ms.median
-        toks = stats.tok_per_sec.median
-        ctx = stats.context_profile
-        users = stats.num_users
-
-        if ttft < 1000:
-            ttft_feel = "instant"
-        elif ttft < 3000:
-            ttft_feel = "responsive"
-        elif ttft < 5000:
-            ttft_feel = "slight pause"
-        elif ttft < 10000:
-            ttft_feel = "noticeable wait"
-        else:
-            ttft_feel = "disruptive"
-
-        if toks > 50:
-            toks_feel = "fast streaming"
-        elif toks > 30:
-            toks_feel = "smooth streaming"
-        elif toks > 15:
-            toks_feel = "slow streaming"
-        else:
-            toks_feel = "sluggish"
-
-        ttft_grade = _grade(ttft, TTFT_GOOD, TTFT_OK, lower_is_better=True)
-        toks_grade = _grade(toks, TOKS_GOOD, TOKS_OK, lower_is_better=False)
-        worst = "poor" if "poor" in [ttft_grade, toks_grade] else (
-            "ok" if "ok" in [ttft_grade, toks_grade] else "good"
-        )
-        icon = _grade_icon(worst)
-
-        label = f"{users}u × `{ctx}`"
-        lines.append(
-            f"| {label} | {_fmt_ms(ttft)} ms | {toks:.0f} tok/s "
-            f"| {icon} {ttft_feel.capitalize()}, {toks_feel} |"
-        )
-
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -456,48 +428,6 @@ def _thinking_section(run: BenchmarkRun) -> list[str]:
 
     lines.append("")
     return lines
-
-
-def _per_profile_section(run: BenchmarkRun, all_stats: list[tuple]) -> str:
-    """Single unified table across all context profiles."""
-    profiles: dict[str, list[tuple]] = {}
-    for scenario, stats in all_stats:
-        p = scenario.context_profile
-        if p not in profiles:
-            profiles[p] = []
-        profiles[p].append((scenario, stats))
-
-    if len(profiles) <= 1:
-        return ""
-
-    lines = [
-        "## Per-Profile Breakdown\n",
-        "| Context | Users | Avg prompt | Tok/s | TTFT p50 | ITL p50 | Agg tok/s | Output tokens |",
-        "|---------|------:|-----------:|------:|---------:|--------:|----------:|--------------:|",
-    ]
-
-    for profile, entries in profiles.items():
-        for _, stats in entries:
-            if stats.successful == 0:
-                lines.append(
-                    f"| `{profile}` | {stats.num_users} "
-                    f"| - | FAIL | - | - | - | - |"
-                )
-                continue
-
-            prompt_str = _fmt_tokens(stats.avg_prompt_tokens)
-            lines.append(
-                f"| `{profile}` | {stats.num_users} | "
-                f"{prompt_str} | "
-                f"{stats.tok_per_sec.median:.1f} | "
-                f"{_fmt_ms(stats.ttft_ms.median)} ms | "
-                f"{stats.itl_ms.median:.1f} ms | "
-                f"{stats.aggregate_tok_per_sec:.0f} | "
-                f"{stats.output_tokens.median:.0f} |"
-            )
-
-    lines.append("")
-    return "\n".join(lines)
 
 
 def _methodology_section(run: BenchmarkRun) -> str:

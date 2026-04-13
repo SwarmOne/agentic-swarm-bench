@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/logo.png" alt="AgenticCodingBench" width="640" />
+  <img src="https://raw.githubusercontent.com/swarmone/agentic-coding-bench/main/assets/logo.png" alt="AgenticCodingBench" width="640" />
 </p>
 
 <p align="center">
@@ -23,6 +23,10 @@
   <a href="#context-control">Context Control</a> &bull;
   <a href="#reports">Reports</a> &bull;
   <a href="#docker">Docker</a>
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/swarmone/agentic-coding-bench/main/assets/demo.gif" alt="AgenticCodingBench demo" width="720" />
 </p>
 
 ---
