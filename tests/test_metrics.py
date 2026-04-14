@@ -2,13 +2,13 @@
 
 import pytest
 
-from agentic_coding_bench.metrics.collector import (
+from agentic_swarm_bench.metrics.collector import (
     BenchmarkRun,
     RequestMetrics,
     ScenarioResult,
     is_context_length_error,
 )
-from agentic_coding_bench.metrics.stats import analyze_scenario, compute_distribution
+from agentic_swarm_bench.metrics.stats import analyze_scenario, compute_distribution
 
 
 def test_request_metrics_to_dict():

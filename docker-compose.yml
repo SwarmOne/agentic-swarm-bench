@@ -1,19 +1,19 @@
 services:
-  agentic-coding-bench:
+  agentic-swarm-bench:
     build: .
-    image: swarmone/agentic-coding-bench:latest
+    image: swarmone/agentic-swarm-bench:latest
     volumes:
       - ./results:/results
     environment:
-      ACB_ENDPOINT: ${ACB_ENDPOINT:-http://host.docker.internal:8000}
-      ACB_MODEL: ${ACB_MODEL:-default}
-      ACB_API_KEY: ${ACB_API_KEY:-}
+      ASB_ENDPOINT: ${ASB_ENDPOINT:-http://host.docker.internal:8000}
+      ASB_MODEL: ${ASB_MODEL:-default}
+      ASB_API_KEY: ${ASB_API_KEY:-}
     command:
       - speed
       - -e
-      - ${ACB_ENDPOINT:-http://host.docker.internal:8000}
+      - ${ASB_ENDPOINT:-http://host.docker.internal:8000}
       - -m
-      - ${ACB_MODEL:-default}
+      - ${ASB_MODEL:-default}
       - --suite
       - quick
       - -o
@@ -21,24 +21,24 @@ services:
 
   proxy:
     build: .
-    image: swarmone/agentic-coding-bench:latest
+    image: swarmone/agentic-swarm-bench:latest
     ports:
       - "19000:19000"
     environment:
-      ACB_ENDPOINT: ${ACB_ENDPOINT:-http://host.docker.internal:8000}
-      ACB_MODEL: ${ACB_MODEL:-default}
-      ACB_API_KEY: ${ACB_API_KEY:-}
+      ASB_ENDPOINT: ${ASB_ENDPOINT:-http://host.docker.internal:8000}
+      ASB_MODEL: ${ASB_MODEL:-default}
+      ASB_API_KEY: ${ASB_API_KEY:-}
     volumes:
       - ./traces:/traces
     entrypoint: ["python", "-c"]
     command:
       - |
-        from agentic_coding_bench.proxy.server import run_proxy
+        from agentic_swarm_bench.proxy.server import run_proxy
         import os
         run_proxy(
-            upstream_url=os.environ.get('ACB_ENDPOINT', 'http://host.docker.internal:8000'),
+            upstream_url=os.environ.get('ASB_ENDPOINT', 'http://host.docker.internal:8000'),
             port=19000,
-            model=os.environ.get('ACB_MODEL', 'default'),
-            api_key=os.environ.get('ACB_API_KEY', ''),
+            model=os.environ.get('ASB_MODEL', 'default'),
+            api_key=os.environ.get('ASB_API_KEY', ''),
             log_dir='/traces',
         )

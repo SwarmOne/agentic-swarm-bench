@@ -1,4 +1,4 @@
-"""Generate realistic coding assistant context for benchmark requests.
+"""Generate realistic agentic assistant context for benchmark requests.
 
 Produces content that looks like real Claude Code / Cursor / Copilot sessions:
 - System prompt with tool definitions
@@ -151,7 +151,7 @@ def _build_conversation_turn(rng: random.Random, index: int) -> str:
 
 
 def build_context_block(target_chars: int) -> str:
-    """Build a block of realistic coding assistant context.
+    """Build a block of realistic agentic assistant context.
 
     Uses a cache keyed by target size to avoid regenerating identical blocks.
     """

@@ -3,7 +3,7 @@
 A workload is a JSONL file where each line is a recorded request from a
 real agentic coding session. Workloads can be:
   - Built-in (shipped with the package in workloads/data/)
-  - User-recorded (via `acb record`)
+  - User-recorded (via `asb record`)
   - Downloaded from the community
 """
 

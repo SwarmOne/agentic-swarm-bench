@@ -13,10 +13,10 @@ import httpx
 from rich.console import Console
 from rich.table import Table
 
-from agentic_coding_bench.config import BenchmarkConfig, resolve_endpoint
-from agentic_coding_bench.runner.direct import _build_headers
-from agentic_coding_bench.tasks.context.codebase_context import build_messages
-from agentic_coding_bench.tasks.registry import get_tasks
+from agentic_swarm_bench.config import BenchmarkConfig, resolve_endpoint
+from agentic_swarm_bench.runner.direct import _build_headers
+from agentic_swarm_bench.tasks.context.codebase_context import build_messages
+from agentic_swarm_bench.tasks.registry import get_tasks
 
 console = Console()
 
@@ -129,7 +129,7 @@ async def run_eval(config: BenchmarkConfig) -> None:
     url = resolve_endpoint(config.endpoint)
     headers = _build_headers(config)
 
-    console.print("\n[bold]agentic-coding-bench eval[/bold]")
+    console.print("\n[bold]agentic-swarm-bench eval[/bold]")
     console.print(f"  Endpoint: {config.endpoint}")
     console.print(f"  Model: {config.model}")
     console.print(f"  Tasks: {len(tasks)}")

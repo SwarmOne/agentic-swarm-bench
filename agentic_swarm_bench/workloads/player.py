@@ -1,8 +1,8 @@
 """Replay recorded workloads against any OpenAI-compatible endpoint.
 
-Takes a JSONL workload (from `acb record` or built-in) and replays each
+Takes a JSONL workload (from `asb record` or built-in) and replays each
 request against a target endpoint, collecting the same metrics as
-`acb speed`. This lets you compare how a real agentic session performs
+`asb speed`. This lets you compare how a real agentic session performs
 across different endpoints, hardware, or configurations.
 
 With ``--users N``, N copies of the workload run concurrently - each
@@ -22,15 +22,15 @@ import httpx
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-from agentic_coding_bench.config import BenchmarkConfig, resolve_endpoint
-from agentic_coding_bench.metrics.collector import (
+from agentic_swarm_bench.config import BenchmarkConfig, resolve_endpoint
+from agentic_swarm_bench.metrics.collector import (
     BenchmarkRun,
     RequestMetrics,
     ScenarioResult,
     is_context_length_error,
 )
-from agentic_coding_bench.metrics.stats import analyze_scenario
-from agentic_coding_bench.workloads.registry import Workload, get_workload
+from agentic_swarm_bench.metrics.stats import analyze_scenario
+from agentic_swarm_bench.workloads.registry import Workload, get_workload
 
 console = Console()
 
@@ -271,7 +271,7 @@ async def replay_workload(
     url = resolve_endpoint(config.endpoint)
     headers = _build_headers(config)
 
-    console.print("\n[bold]AgenticCodingBench -- replay[/bold]")
+    console.print("\n[bold]AgenticSwarmBench -- replay[/bold]")
     console.print(f"  Endpoint: {config.endpoint}")
     console.print(f"  Model: {config.model}")
     console.print(f"  Workload: {workload.name} ({workload.total_requests} requests)")
@@ -602,7 +602,7 @@ def _save_replay_output(config: BenchmarkConfig, run: BenchmarkRun) -> None:
     console.print(f"\n  Results saved to {json_path}")
 
     if output.endswith(".md"):
-        from agentic_coding_bench.report.markdown import generate_report
+        from agentic_swarm_bench.report.markdown import generate_report
         report = generate_report(run, json_path=json_path)
         with open(output, "w") as f:
             f.write(report)

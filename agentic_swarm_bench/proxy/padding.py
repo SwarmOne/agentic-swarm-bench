@@ -1,12 +1,12 @@
 """Context padding for the recording proxy.
 
-Pads messages to a target token count with realistic coding context,
+Pads messages to a target token count with realistic agentic swarm context,
 optionally injecting a unique salt to defeat prefix caching.
 """
 
 from __future__ import annotations
 
-from agentic_coding_bench.tasks.context.codebase_context import (
+from agentic_swarm_bench.tasks.context.codebase_context import (
     build_cache_defeat_salt,
     build_context_block,
 )

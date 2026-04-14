@@ -1,4 +1,4 @@
-"""Configuration management for agentic-coding-bench.
+"""Configuration management for agentic-swarm-bench.
 
 Merges CLI arguments, environment variables, and optional YAML config.
 CLI > env vars > YAML > defaults.
@@ -27,7 +27,7 @@ REALISTIC_PROFILE_SEQUENCE = ["fresh", "short", "medium", "long", "full"]
 
 SUITE_CONFIGS = {
     "quick": {
-        "users": [1, 8],
+        "users": [1, 4, 8],
         "profiles": ["fresh"],
     },
     "standard": {
@@ -128,13 +128,13 @@ class BenchmarkConfig:
     @classmethod
     def from_env(cls) -> BenchmarkConfig:
         return cls(
-            endpoint=os.getenv("ACB_ENDPOINT", ""),
-            model=os.getenv("ACB_MODEL", ""),
-            api_key=os.getenv("ACB_API_KEY", ""),
-            context_tokens=_int_or_none(os.getenv("ACB_CONTEXT_TOKENS")),
-            context_profile=os.getenv("ACB_CONTEXT_PROFILE"),
-            model_context_length=_int_or_none(os.getenv("ACB_MODEL_CONTEXT_LENGTH")),
-            defeat_cache=(os.getenv("ACB_DEFEAT_CACHE", "true").lower() == "true"),
+            endpoint=os.getenv("ASB_ENDPOINT", ""),
+            model=os.getenv("ASB_MODEL", ""),
+            api_key=os.getenv("ASB_API_KEY", ""),
+            context_tokens=_int_or_none(os.getenv("ASB_CONTEXT_TOKENS")),
+            context_profile=os.getenv("ASB_CONTEXT_PROFILE"),
+            model_context_length=_int_or_none(os.getenv("ASB_MODEL_CONTEXT_LENGTH")),
+            defeat_cache=(os.getenv("ASB_DEFEAT_CACHE", "true").lower() == "true"),
         )
 
     def merge(self, **overrides) -> BenchmarkConfig:

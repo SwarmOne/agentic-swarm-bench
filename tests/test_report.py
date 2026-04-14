@@ -1,8 +1,8 @@
 """Tests for report generation."""
 
-from agentic_coding_bench.metrics.collector import BenchmarkRun, RequestMetrics, ScenarioResult
-from agentic_coding_bench.metrics.stats import DistributionStats, ScenarioStats
-from agentic_coding_bench.report.markdown import (
+from agentic_swarm_bench.metrics.collector import BenchmarkRun, RequestMetrics, ScenarioResult
+from agentic_swarm_bench.metrics.stats import DistributionStats, ScenarioStats
+from agentic_swarm_bench.report.markdown import (
     _base_profile,
     _experience_label,
     _grade,
@@ -196,7 +196,7 @@ def test_generate_report_contains_methodology():
 def test_generate_report_contains_verdict():
     report = generate_report(_make_run())
     assert "Verdict" in report
-    assert "agentic coding" in report.lower()
+    assert "agentic swarm" in report.lower()
 
 
 def test_generate_report_contains_key_findings():

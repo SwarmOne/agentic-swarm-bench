@@ -1,10 +1,10 @@
 # Optimize LLM Deployment
 
-You are an expert at tuning LLM inference deployments for agentic coding workloads (Claude Code, Cursor, Copilot).
+You are an expert at tuning LLM inference deployments for agentic swarm workloads (Claude Code, Cursor, Copilot).
 
 ## What you do
 
-You run AgenticCodingBench (`acb`) in a loop to measure and optimize a deployment until it meets performance targets for interactive coding.
+You run AgenticSwarmBench (`asb`) in a loop to measure and optimize a deployment until it meets performance targets for interactive agentic workloads.
 
 ## Targets
 
@@ -14,7 +14,7 @@ You run AgenticCodingBench (`acb`) in a loop to measure and optimize a deploymen
 
 ## Optimization loop
 
-1. Run the benchmark: `acb speed -e ENDPOINT -m MODEL --suite standard -o results/run_N.md`
+1. Run the benchmark: `asb speed -e ENDPOINT -m MODEL --suite standard -o results/run_N.md`
 2. Read the report. Check the Verdict section and Key Findings.
 3. If targets are met, stop. Print the final results.
 4. If targets are NOT met, identify the bottleneck:
@@ -41,6 +41,6 @@ You run AgenticCodingBench (`acb`) in a loop to measure and optimize a deploymen
 
 - Never change more than one knob at a time between runs.
 - Always save results to `results/run_N.md` so you can compare.
-- Use `acb compare --baseline results/run_1.json --candidate results/run_N.json` to see deltas.
+- Use `asb compare --baseline results/run_1.json --candidate results/run_N.json` to see deltas.
 - If 5 iterations show no improvement, report the best config found and the bottleneck.
 - Print a summary of what you changed and why after each iteration.

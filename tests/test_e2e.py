@@ -8,8 +8,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from agentic_coding_bench.config import BenchmarkConfig
-from agentic_coding_bench.runner.direct import run_speed_benchmark
+from agentic_swarm_bench.config import BenchmarkConfig
+from agentic_swarm_bench.runner.direct import run_speed_benchmark
 
 _mock_server = None
 _mock_port = None
@@ -120,7 +120,7 @@ def test_speed_benchmark_report_generation(tmp_path):
 
     run = asyncio.run(run_speed_benchmark(cfg))
 
-    from agentic_coding_bench.report.markdown import generate_report
+    from agentic_swarm_bench.report.markdown import generate_report
 
     report = generate_report(run)
     assert "mock-model" in report
@@ -130,7 +130,7 @@ def test_speed_benchmark_report_generation(tmp_path):
     json_path = str(tmp_path / "report.json")
     run.save(json_path)
 
-    from agentic_coding_bench.metrics.collector import BenchmarkRun
+    from agentic_swarm_bench.metrics.collector import BenchmarkRun
 
     loaded = BenchmarkRun.load(json_path)
     assert loaded.model == "mock-model"

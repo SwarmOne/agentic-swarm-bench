@@ -1,6 +1,6 @@
 """Tests for configuration management."""
 
-from agentic_coding_bench.config import (
+from agentic_swarm_bench.config import (
     BenchmarkConfig,
     build_config,
 )
@@ -43,9 +43,9 @@ def test_resolved_scenarios_suite_quick():
     scenarios = cfg.resolved_scenarios
     users_seen = {s[0] for s in scenarios}
     profiles_seen = {s[1] for s in scenarios}
-    assert users_seen == {1, 8}
+    assert users_seen == {1, 4, 8}
     assert profiles_seen == {"fresh"}
-    assert len(scenarios) == 2
+    assert len(scenarios) == 3
 
 
 def test_resolved_scenarios_suite_standard_mapping():

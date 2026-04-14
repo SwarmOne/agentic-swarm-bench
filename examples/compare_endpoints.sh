@@ -18,7 +18,7 @@ OUTPUT="results/compare_${TIMESTAMP}"
 mkdir -p "$OUTPUT"
 
 echo "=== Benchmarking A: $MODEL_A ==="
-agentic-coding-bench speed \
+agentic-swarm-bench speed \
   --endpoint "$ENDPOINT_A" \
   --model "$MODEL_A" \
   --suite standard \
@@ -26,7 +26,7 @@ agentic-coding-bench speed \
 
 echo ""
 echo "=== Benchmarking B: $MODEL_B ==="
-agentic-coding-bench speed \
+agentic-swarm-bench speed \
   --endpoint "$ENDPOINT_B" \
   --model "$MODEL_B" \
   --suite standard \
@@ -34,7 +34,7 @@ agentic-coding-bench speed \
 
 echo ""
 echo "=== Generating comparison ==="
-agentic-coding-bench compare \
+agentic-swarm-bench compare \
   --baseline "$OUTPUT/a.json" \
   --candidate "$OUTPUT/b.json" \
   --output "$OUTPUT/comparison.md"

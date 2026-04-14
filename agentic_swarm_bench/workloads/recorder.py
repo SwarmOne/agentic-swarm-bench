@@ -1,6 +1,6 @@
-"""Recording proxy that captures real agentic sessions as JSONL workloads.
+"""Recording proxy that captures real coding sessions as JSONL workloads.
 
-Sits between a coding agent (Claude Code, Cursor, etc.) and any LLM
+Sits between an agent (Claude Code, Cursor, etc.) and any LLM
 endpoint. Every request/response pair is saved as a JSONL line, creating
 a replayable workload.
 
@@ -61,10 +61,10 @@ def create_recording_app(
     if not HAS_FASTAPI:
         raise ImportError(
             "FastAPI and uvicorn are required for recording. "
-            "Install with: pip install agentic-coding-bench[proxy]"
+            "Install with: pip install agentic-swarm-bench[proxy]"
         )
 
-    app = FastAPI(title="agentic-coding-bench Workload Recorder")
+    app = FastAPI(title="agentic-swarm-bench Workload Recorder")
     out_path = Path(output_file)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -98,7 +98,7 @@ def create_recording_app(
 
     def _anthropic_messages_to_openai(body: dict) -> list[dict]:
         """Convert Anthropic message format to OpenAI for the JSONL recording."""
-        from agentic_coding_bench.proxy.translators import anthropic_to_openai
+        from agentic_swarm_bench.proxy.translators import anthropic_to_openai
         oai_body = anthropic_to_openai(body, model)
         return oai_body.get("messages", [])
 
@@ -147,7 +147,7 @@ def create_recording_app(
         t_start = time.perf_counter()
 
         if is_messages_api and body_json:
-            from agentic_coding_bench.proxy.translators import anthropic_to_openai
+            from agentic_swarm_bench.proxy.translators import anthropic_to_openai
             oai_body = anthropic_to_openai(body_json, model)
             target_url = _resolve_upstream("v1/chat/completions")
         else:
@@ -197,7 +197,7 @@ def create_recording_app(
         _write_entry(entry)
 
         if is_messages_api and resp_json is not None:
-            from agentic_coding_bench.proxy.translators import openai_to_anthropic_response
+            from agentic_swarm_bench.proxy.translators import openai_to_anthropic_response
             anthropic_resp = openai_to_anthropic_response(
                 resp_json, body_json.get("model", "unknown")
             )
@@ -376,7 +376,7 @@ def create_recording_app(
             last_time = None
 
             if is_messages_api:
-                from agentic_coding_bench.proxy.translators import make_anthropic_stream_events
+                from agentic_swarm_bench.proxy.translators import make_anthropic_stream_events
                 msg_id = "msg_" + uuid.uuid4().hex[:24]
                 anth_model = entry.get("model", "unknown")
                 for evt in make_anthropic_stream_events(anth_model, msg_id):
@@ -499,7 +499,7 @@ def run_recorder(
 ) -> None:
     """Start the recording proxy server."""
     if not HAS_FASTAPI:
-        raise ImportError("Install proxy deps: pip install agentic-coding-bench[proxy]")
+        raise ImportError("Install proxy deps: pip install agentic-swarm-bench[proxy]")
 
     detected_api = _detect_upstream_api(upstream_url, upstream_api)
 
@@ -511,13 +511,13 @@ def run_recorder(
         output_file=output_file,
         upstream_api=upstream_api,
     )
-    print(f"\nagentic-coding-bench recorder on :{port} -> {upstream_url}")
+    print(f"\nagentic-swarm-bench recorder on :{port} -> {upstream_url}")
     print(f"  Model: {model}")
     print(f"  Upstream API: {detected_api}")
     print(f"  Output: {output_file}")
     print(f"  Status: http://localhost:{port}/workload/status")
     print()
-    print("  Point your coding agent (Claude Code, Cursor, etc.) at:")
+    print("  Point your agent (Claude Code, Cursor, etc.) at:")
     print(f"    http://localhost:{port}")
     if detected_api == "anthropic":
         print()

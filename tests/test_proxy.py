@@ -1,7 +1,7 @@
 """Tests for proxy translation and padding."""
 
-from agentic_coding_bench.proxy.padding import count_tokens_approx, pad_messages_to_target
-from agentic_coding_bench.proxy.translators import anthropic_to_openai, openai_to_anthropic_response
+from agentic_swarm_bench.proxy.padding import count_tokens_approx, pad_messages_to_target
+from agentic_swarm_bench.proxy.translators import anthropic_to_openai, openai_to_anthropic_response
 
 
 def test_anthropic_to_openai_basic():

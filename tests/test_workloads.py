@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from agentic_coding_bench.workloads.registry import (
+from agentic_swarm_bench.workloads.registry import (
     Workload,
     WorkloadEntry,
     get_workload,
@@ -233,7 +233,7 @@ def test_get_workload_by_name_not_found():
 
 def test_bucket_label_thresholds():
     """Verify _bucket_label maps token counts to correct profiles."""
-    from agentic_coding_bench.workloads.player import _bucket_label
+    from agentic_swarm_bench.workloads.player import _bucket_label
 
     assert _bucket_label(0) == "fresh"
     assert _bucket_label(5_000) == "fresh"
@@ -291,8 +291,8 @@ def test_replay_user_session_skips_oversized_requests(tmp_path):
     """_replay_user_session should skip entries exceeding model_context_length."""
     import asyncio
 
-    from agentic_coding_bench.workloads.player import _replay_user_session
-    from agentic_coding_bench.workloads.registry import load_workload
+    from agentic_swarm_bench.workloads.player import _replay_user_session
+    from agentic_swarm_bench.workloads.registry import load_workload
 
     path = _make_varied_workload_file(tmp_path)
     wl = load_workload(path)
@@ -324,8 +324,8 @@ def test_replay_user_session_no_skip_without_limit(tmp_path):
     """Without model_context_length, _replay_user_session attempts all entries."""
     import asyncio
 
-    from agentic_coding_bench.workloads.player import _replay_user_session
-    from agentic_coding_bench.workloads.registry import load_workload
+    from agentic_swarm_bench.workloads.player import _replay_user_session
+    from agentic_swarm_bench.workloads.registry import load_workload
 
     path = _make_varied_workload_file(tmp_path)
     wl = load_workload(path)

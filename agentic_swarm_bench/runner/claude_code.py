@@ -13,8 +13,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from agentic_coding_bench.config import BenchmarkConfig
-from agentic_coding_bench.tasks.registry import get_tasks
+from agentic_swarm_bench.config import BenchmarkConfig
+from agentic_swarm_bench.tasks.registry import get_tasks
 
 console = Console()
 
@@ -35,7 +35,7 @@ async def run_agent_benchmark(
     if not tasks:
         tasks = get_tasks(task_range="p1-p10")
 
-    console.print("\n[bold]agentic-coding-bench agent[/bold]")
+    console.print("\n[bold]agentic-swarm-bench agent[/bold]")
     console.print(f"  Upstream: {config.endpoint}")
     console.print(f"  Model: {config.model}")
     console.print(f"  Agent: {agent_cmd}")
@@ -51,12 +51,12 @@ async def run_agent_benchmark(
 
         env = os.environ.copy()
         env["ANTHROPIC_BASE_URL"] = f"http://localhost:{config.proxy_port}"
-        env["ANTHROPIC_AUTH_TOKEN"] = "agentic-coding-bench"
+        env["ANTHROPIC_AUTH_TOKEN"] = "agentic-swarm-bench"
         env["ANTHROPIC_MODEL"] = config.model
         env["CLAUDE_MODEL"] = config.model
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
 
-        workdir = Path(tempfile.mkdtemp(prefix="agentic-coding-bench-"))
+        workdir = Path(tempfile.mkdtemp(prefix="agentic-swarm-bench-"))
 
         for i, task in enumerate(tasks):
             task_dir = workdir / f"task_{task['id']}"
@@ -105,16 +105,16 @@ async def run_agent_benchmark(
 def _start_proxy(config: BenchmarkConfig) -> subprocess.Popen | None:
     """Start the recording proxy as a subprocess."""
     try:
-        import agentic_coding_bench.proxy.server  # noqa: F401
+        import agentic_swarm_bench.proxy.server  # noqa: F401
     except ImportError:
-        console.print("[red]Proxy deps missing. Run: pip install agentic-coding-bench[proxy][/red]")
+        console.print("[red]Proxy deps missing. Run: pip install agentic-swarm-bench[proxy][/red]")
         return None
 
     import sys
 
     script = (
         "import json, sys; "
-        "from agentic_coding_bench.proxy.server import run_proxy; "
+        "from agentic_swarm_bench.proxy.server import run_proxy; "
         "args = json.loads(sys.argv[1]); "
         "run_proxy(**args)"
     )

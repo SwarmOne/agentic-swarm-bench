@@ -21,16 +21,16 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from rich.table import Table
 from rich.text import Text
 
-from agentic_coding_bench.config import BenchmarkConfig, resolve_endpoint
-from agentic_coding_bench.metrics.collector import (
+from agentic_swarm_bench.config import BenchmarkConfig, resolve_endpoint
+from agentic_swarm_bench.metrics.collector import (
     BenchmarkRun,
     RequestMetrics,
     ScenarioResult,
     is_context_length_error,
 )
-from agentic_coding_bench.metrics.stats import ScenarioStats, analyze_scenario
-from agentic_coding_bench.tasks.context.codebase_context import build_messages
-from agentic_coding_bench.tasks.registry import get_tasks
+from agentic_swarm_bench.metrics.stats import ScenarioStats, analyze_scenario
+from agentic_swarm_bench.tasks.context.codebase_context import build_messages
+from agentic_swarm_bench.tasks.registry import get_tasks
 
 console = Console()
 
@@ -449,6 +449,13 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
     )
 
     scenarios = config.resolved_scenarios
+    if not scenarios:
+        console.print(
+            f"[bold red]Error:[/] No scenarios resolved for suite={config.suite!r} "
+            f"with model-context-length={config.model_context_length}.\n"
+            "Try a larger --model-context-length or a different --suite.",
+        )
+        raise SystemExit(1)
     cache_mode = getattr(config, "cache_mode", "cold")
 
     max_context_tokens = max((t for _, _, t in scenarios), default=0)
@@ -489,7 +496,7 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
     console.print()
     console.print(Panel(
         header_lines,
-        title="[bold]acb speed[/bold]",
+        title="[bold]asb speed[/bold]",
         title_align="left",
         border_style=DIM,
         padding=(0, 2),
@@ -613,7 +620,7 @@ def _save_outputs(config: BenchmarkConfig, run: BenchmarkRun) -> None:
     console.print(f"\n  [{DIM}]Saved →[/{DIM}]  {json_path}")
 
     if output.endswith(".md"):
-        from agentic_coding_bench.report.markdown import generate_report
+        from agentic_swarm_bench.report.markdown import generate_report
 
         report = generate_report(run, json_path=json_path)
         with open(output, "w") as f:
@@ -648,7 +655,7 @@ def _derive_json_path(output: str) -> str:
 
 def _print_summary_table(run: BenchmarkRun) -> None:
     """Print a final summary table across all scenarios with verdict."""
-    from agentic_coding_bench.report.markdown import (
+    from agentic_swarm_bench.report.markdown import (
         _verdict_for_stats,
         _verdict_label,
     )

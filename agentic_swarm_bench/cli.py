@@ -1,4 +1,4 @@
-"""CLI entry point for agentic-coding-bench."""
+"""CLI entry point for agentic-swarm-bench."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import asyncio
 import click
 from rich.console import Console
 
-from agentic_coding_bench import __version__
-from agentic_coding_bench.config import (
+from agentic_swarm_bench import __version__
+from agentic_swarm_bench.config import (
     CONTEXT_PROFILES,
     SUITE_CONFIGS,
     build_config,
@@ -18,7 +18,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option(version=__version__, prog_name="agentic-coding-bench")
+@click.version_option(version=__version__, prog_name="agentic-swarm-bench")
 @click.option(
     "--config",
     type=click.Path(exists=True),
@@ -27,7 +27,7 @@ console = Console()
 )
 @click.pass_context
 def main(ctx, config):
-    """AgenticCodingBench - Benchmark LLM inference under agentic coding workloads.
+    """AgenticSwarmBench - Benchmark LLM inference under agentic workloads.
 
     \b
     Modes:
@@ -56,7 +56,7 @@ def main(ctx, config):
 @main.command()
 @click.option("--endpoint", "-e", required=True, help="Any OpenAI-compatible URL")
 @click.option("--model", "-m", required=True, help="Model name to use in requests")
-@click.option("--api-key", "-k", default="", help="API key (or set ACB_API_KEY)")
+@click.option("--api-key", "-k", default="", help="API key (or set ASB_API_KEY)")
 @click.option(
     "--api-key-header",
     default="Authorization",
@@ -149,13 +149,13 @@ def speed(
 
     \b
     Examples:
-      acb speed -e http://localhost:8000 -m my-model --suite quick
-      acb speed -e https://api.example.com/v1/chat/completions -m my-model
-      acb speed -e http://localhost:8000 -m my-model -u 32 -p long
-      acb speed -e http://localhost:8000 -m my-model --dry-run
-      acb speed -e http://localhost:8000 -m my-model --format json -o results.json
+      asb speed -e http://localhost:8000 -m my-model --suite quick
+      asb speed -e https://api.example.com/v1/chat/completions -m my-model
+      asb speed -e http://localhost:8000 -m my-model -u 32 -p long
+      asb speed -e http://localhost:8000 -m my-model --dry-run
+      asb speed -e http://localhost:8000 -m my-model --format json -o results.json
     """
-    from agentic_coding_bench.runner.direct import run_speed_benchmark
+    from agentic_swarm_bench.runner.direct import run_speed_benchmark
 
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
@@ -214,7 +214,7 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
     Sends tasks to the endpoint, collects generated code, and validates
     at the requested level (syntax, execution, or functional correctness).
     """
-    from agentic_coding_bench.runner.eval_runner import run_eval
+    from agentic_swarm_bench.runner.eval_runner import run_eval
 
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
@@ -251,11 +251,11 @@ def agent(ctx, endpoint, model, api_key, api_key_header, tasks, agent_cmd, proxy
     """Run full agentic benchmark through the recording proxy.
 
     \b
-    Starts a recording proxy that sits between a coding agent (like Claude Code)
+    Starts a recording proxy that sits between an agent (like Claude Code)
     and your endpoint. The proxy translates Anthropic API to OpenAI API and
     records per-request timing metrics.
     """
-    from agentic_coding_bench.runner.claude_code import run_agent_benchmark
+    from agentic_swarm_bench.runner.claude_code import run_agent_benchmark
 
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
@@ -293,16 +293,16 @@ def list_tasks(tasks, tags, fmt):
 
     \b
     Examples:
-      acb list-tasks
-      acb list-tasks -t trivial
-      acb list-tasks --tags typescript,rust
-      acb list-tasks --format json
+      asb list-tasks
+      asb list-tasks -t trivial
+      asb list-tasks --tags typescript,rust
+      asb list-tasks --format json
     """
     import json as json_mod
 
     from rich.table import Table
 
-    from agentic_coding_bench.tasks.registry import get_tasks
+    from agentic_swarm_bench.tasks.registry import get_tasks
 
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
     matched = get_tasks(task_range=tasks, tags=tag_list)
@@ -313,7 +313,7 @@ def list_tasks(tasks, tags, fmt):
         console.print(json_mod.dumps(matched, indent=2))
         return
 
-    table = Table(title=f"AgenticCodingBench Tasks ({len(matched)} total)")
+    table = Table(title=f"AgenticSwarmBench Tasks ({len(matched)} total)")
     table.add_column("ID", justify="right")
     table.add_column("Tier")
     table.add_column("Tags")
@@ -353,10 +353,10 @@ def list_tasks(tasks, tags, fmt):
     "(api.anthropic.com → anthropic, everything else → openai).",
 )
 def record(endpoint, model, api_key, api_key_header, port, output, upstream_api):
-    """Record a real agentic coding session as a replayable workload.
+    """Record a real coding session as a replayable workload.
 
     \b
-    Starts a recording proxy that captures every request from your coding
+    Starts a recording proxy that captures every request from your session
     agent (Claude Code, Cursor, etc.) into a JSONL workload file. Stop
     with Ctrl+C when done.
 
@@ -367,12 +367,12 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 
     \b
     Examples:
-      acb record -e http://localhost:8000 -m my-model
-      acb record -e https://api.anthropic.com -m claude-sonnet-4-20250514 \\
+      asb record -e http://localhost:8000 -m my-model
+      asb record -e https://api.anthropic.com -m claude-sonnet-4-20250514 \\
         -k $ANTHROPIC_API_KEY --api-key-header x-api-key
-      acb record -e http://localhost:8000 -m my-model -o session.jsonl
+      asb record -e http://localhost:8000 -m my-model -o session.jsonl
     """
-    from agentic_coding_bench.workloads.recorder import run_recorder
+    from agentic_swarm_bench.workloads.recorder import run_recorder
 
     run_recorder(
         upstream_url=endpoint,
@@ -424,7 +424,7 @@ def replay(
     """Replay a recorded workload against any endpoint.
 
     \b
-    Takes a JSONL workload (from `acb record` or built-in) and replays
+    Takes a JSONL workload (from `asb record` or built-in) and replays
     each request against the target endpoint, measuring TTFT, tok/s,
     and throughput.
 
@@ -444,13 +444,13 @@ def replay(
 
     \b
     Examples:
-      acb replay -e http://localhost:8000 -m my-model -w session.jsonl
-      acb replay -e http://localhost:8000 -m my-model -w session.jsonl -u 4
-      acb replay -e http://new-server:8000 -m my-model -w session.jsonl -o report.md
-      acb replay -e URL -m MODEL -w session.jsonl --slice-tokens 1000000
-      acb replay -e URL -m MODEL -w session.jsonl --model-context-length 4096
+      asb replay -e http://localhost:8000 -m my-model -w session.jsonl
+      asb replay -e http://localhost:8000 -m my-model -w session.jsonl -u 4
+      asb replay -e http://new-server:8000 -m my-model -w session.jsonl -o report.md
+      asb replay -e URL -m MODEL -w session.jsonl --slice-tokens 1000000
+      asb replay -e URL -m MODEL -w session.jsonl --model-context-length 4096
     """
-    from agentic_coding_bench.workloads.player import replay_workload
+    from agentic_swarm_bench.workloads.player import replay_workload
 
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
@@ -486,14 +486,14 @@ def list_workloads(fmt):
 
     \b
     Examples:
-      acb list-workloads
-      acb list-workloads --format json
+      asb list-workloads
+      asb list-workloads --format json
     """
     import json as json_mod
 
     from rich.table import Table
 
-    from agentic_coding_bench.workloads.registry import list_builtin_workloads
+    from agentic_swarm_bench.workloads.registry import list_builtin_workloads
 
     workloads = list_builtin_workloads()
 
@@ -503,7 +503,7 @@ def list_workloads(fmt):
 
     if not workloads:
         console.print(
-            "No built-in workloads found. Record one with: acb record -e URL -m MODEL"
+            "No built-in workloads found. Record one with: asb record -e URL -m MODEL"
         )
         return
 
@@ -540,15 +540,15 @@ def report(input, output, fmt):
 
     \b
     Examples:
-      agentic-coding-bench report -i results.json -o report.md
-      agentic-coding-bench report -i results.json -f json
+      agentic-swarm-bench report -i results.json -o report.md
+      agentic-swarm-bench report -i results.json -f json
     """
-    from agentic_coding_bench.metrics.collector import BenchmarkRun
+    from agentic_swarm_bench.metrics.collector import BenchmarkRun
 
     run = BenchmarkRun.load(input)
 
     if fmt == "markdown":
-        from agentic_coding_bench.report.markdown import generate_report
+        from agentic_swarm_bench.report.markdown import generate_report
 
         text = generate_report(run)
     else:
@@ -570,8 +570,8 @@ def report(input, output, fmt):
 @click.option("--output", "-o", default=None, help="Output file")
 def compare(baseline, candidate, output):
     """Compare two benchmark runs side by side."""
-    from agentic_coding_bench.metrics.collector import BenchmarkRun
-    from agentic_coding_bench.report.markdown import generate_comparison
+    from agentic_swarm_bench.metrics.collector import BenchmarkRun
+    from agentic_swarm_bench.report.markdown import generate_comparison
 
     run_a = BenchmarkRun.load(baseline)
     run_b = BenchmarkRun.load(candidate)

@@ -1,10 +1,10 @@
 """Recording proxy server for agentic benchmarks.
 
-Sits between a coding agent (Claude Code, etc.) and an OpenAI-compatible endpoint.
+Sits between an agent (Claude Code, etc.) and an OpenAI-compatible endpoint.
 Translates Anthropic Messages API to OpenAI Chat Completions API, records timing.
 
 Usage:
-    python -m agentic_coding_bench.proxy.server --upstream http://localhost:8000 --port 19000
+    python -m agentic_swarm_bench.proxy.server --upstream http://localhost:8000 --port 19000
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ try:
 except ImportError:
     HAS_FASTAPI = False
 
-from agentic_coding_bench.proxy.padding import pad_messages_to_target
-from agentic_coding_bench.proxy.translators import (
+from agentic_swarm_bench.proxy.padding import pad_messages_to_target
+from agentic_swarm_bench.proxy.translators import (
     anthropic_to_openai,
     make_anthropic_stream_events,
     openai_to_anthropic_response,
@@ -45,10 +45,10 @@ def create_app(
     if not HAS_FASTAPI:
         raise ImportError(
             "FastAPI and uvicorn are required for the proxy. "
-            "Install with: pip install agentic-coding-bench[proxy]"
+            "Install with: pip install agentic-swarm-bench[proxy]"
         )
 
-    app = FastAPI(title="agentic-coding-bench Recording Proxy")
+    app = FastAPI(title="agentic-swarm-bench Recording Proxy")
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
     metrics_log = log_path / "metrics.jsonl"
@@ -301,7 +301,7 @@ def run_proxy(
 ):
     """Start the recording proxy server."""
     if not HAS_FASTAPI:
-        raise ImportError("Install proxy deps: pip install agentic-coding-bench[proxy]")
+        raise ImportError("Install proxy deps: pip install agentic-swarm-bench[proxy]")
 
     app = create_app(
         upstream_url=upstream_url,
@@ -311,7 +311,7 @@ def run_proxy(
         defeat_cache=defeat_cache,
         log_dir=log_dir,
     )
-    print(f"agentic-coding-bench proxy on :{port} -> {upstream_url}")
+    print(f"agentic-swarm-bench proxy on :{port} -> {upstream_url}")
     print(f"  Model: {model}")
     print(f"  Context target: {context_target_tokens} tokens (0 = no padding)")
     print(f"  Defeat cache: {defeat_cache}")

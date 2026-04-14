@@ -1,6 +1,6 @@
 """Tests for task loading and filtering."""
 
-from agentic_coding_bench.tasks.registry import (
+from agentic_swarm_bench.tasks.registry import (
     filter_tasks,
     get_tasks,
     load_all_tasks,

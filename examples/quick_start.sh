@@ -10,12 +10,12 @@ set -euo pipefail
 ENDPOINT="${1:?Usage: $0 <endpoint> <model>}"
 MODEL="${2:?Usage: $0 <endpoint> <model>}"
 
-echo "=== AgenticCodingBench - Quick Start ==="
+echo "=== AgenticSwarmBench - Quick Start ==="
 echo "Endpoint: $ENDPOINT"
 echo "Model:    $MODEL"
 echo ""
 
-agentic-coding-bench speed \
+agentic-swarm-bench speed \
   --endpoint "$ENDPOINT" \
   --model "$MODEL" \
   --suite quick \

@@ -1,6 +1,6 @@
 """Tests for context padding and cache defeat."""
 
-from agentic_coding_bench.tasks.context.codebase_context import (
+from agentic_swarm_bench.tasks.context.codebase_context import (
     build_cache_defeat_salt,
     build_context_block,
     build_messages,

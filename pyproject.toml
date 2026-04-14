@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentic-coding-bench"
+name = "agentic-swarm-bench"
 version = "1.0.0"
-description = "Open-source benchmark for LLM inference on agentic coding workloads"
+description = "Open-source benchmark for LLM inference on agentic swarm workloads"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 authors = [
     { name = "SwarmOne", email = "eng@swarmone.ai" },
 ]
-keywords = ["benchmark", "llm", "inference", "vllm", "coding", "agent"]
+keywords = ["benchmark", "llm", "inference", "vllm", "swarm", "agent"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -38,13 +38,13 @@ dev = [
 ]
 
 [project.scripts]
-agentic-coding-bench = "agentic_coding_bench.cli:main"
-acb = "agentic_coding_bench.cli:main"
+agentic-swarm-bench = "agentic_swarm_bench.cli:main"
+asb = "agentic_swarm_bench.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/swarmone/agentic-coding-bench"
-Repository = "https://github.com/swarmone/agentic-coding-bench"
-Issues = "https://github.com/swarmone/agentic-coding-bench/issues"
+Homepage = "https://github.com/swarmone/agentic-swarm-bench"
+Repository = "https://github.com/swarmone/agentic-swarm-bench"
+Issues = "https://github.com/swarmone/agentic-swarm-bench/issues"
 
 [tool.ruff]
 line-length = 100

@@ -1,12 +1,12 @@
-# Contributing to AgenticCodingBench
+# Contributing to AgenticSwarmBench
 
 Thank you for your interest in contributing! This document explains how to get started.
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/swarmone/agentic-coding-bench.git
-cd agentic-coding-bench
+git clone https://github.com/swarmone/agentic-swarm-bench.git
+cd agentic-swarm-bench
 pip install -e ".[dev,proxy]"
 ```
 
@@ -28,13 +28,13 @@ make format        # Auto-format code
 
 ## Adding Tasks
 
-Tasks live in `agentic_coding_bench/tasks/tasks.json`. Each task needs:
+Tasks live in `agentic_swarm_bench/tasks/tasks.json`. Each task needs:
 
 | Field               | Description                            |
 | ------------------- | -------------------------------------- |
 | `id`                | P1 through P110                        |
 | `tier`              | trivial, easy, medium, hard, or expert |
-| `prompt`            | The coding task description            |
+| `prompt`            | The swarm task description             |
 | `tags`              | List of category tags                  |
 | `max_output_tokens` | Max tokens for the response            |
 
@@ -57,7 +57,7 @@ Tier assignments follow these ranges:
 
 Please include:
 
-- AgenticCodingBench version (`acb --version`)
+- AgenticSwarmBench version (`asb --version`)
 - Python version
 - The command you ran
 - Full error output

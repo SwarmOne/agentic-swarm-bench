@@ -13,13 +13,13 @@ OUTPUT="results/${MODEL//\//_}_full_$(date +%Y%m%d_%H%M%S)"
 
 mkdir -p "$OUTPUT"
 
-echo "=== AgenticCodingBench - Full Suite ==="
+echo "=== AgenticSwarmBench - Full Suite ==="
 echo "Endpoint: $ENDPOINT"
 echo "Model:    $MODEL"
 echo "Output:   $OUTPUT"
 echo ""
 
-agentic-coding-bench speed \
+agentic-swarm-bench speed \
   --endpoint "$ENDPOINT" \
   --model "$MODEL" \
   --suite full \

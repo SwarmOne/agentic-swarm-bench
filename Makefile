@@ -7,12 +7,12 @@ dev:
 	pip install -e ".[dev,proxy]"
 
 lint:
-	ruff check agentic_coding_bench/ tests/
-	ruff format --check agentic_coding_bench/ tests/
+	ruff check agentic_swarm_bench/ tests/
+	ruff format --check agentic_swarm_bench/ tests/
 
 format:
-	ruff check --fix agentic_coding_bench/ tests/
-	ruff format agentic_coding_bench/ tests/
+	ruff check --fix agentic_swarm_bench/ tests/
+	ruff format agentic_swarm_bench/ tests/
 
 test:
 	pytest tests/ -v
@@ -22,4 +22,4 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 docker:
-	docker build -t swarmone/agentic-coding-bench .
+	docker build -t swarmone/agentic-swarm-bench .

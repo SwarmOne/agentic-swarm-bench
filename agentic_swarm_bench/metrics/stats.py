@@ -5,7 +5,7 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass
 
-from agentic_coding_bench.metrics.collector import ScenarioResult
+from agentic_swarm_bench.metrics.collector import ScenarioResult
 
 
 @dataclass
