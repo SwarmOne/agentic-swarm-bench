@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
+from agentic_swarm_bench.metrics.collector import RequestMetrics
 from agentic_swarm_bench.workloads.player import (
     _bucket_label,
     _compute_bucket_wall_time,
@@ -16,7 +14,11 @@ from agentic_swarm_bench.workloads.player import (
     _replay_one_request,
     _slice_entries,
 )
-from agentic_swarm_bench.metrics.collector import RequestMetrics
+
+
+def _run(coro):
+    """Run an async coroutine synchronously (no pytest-asyncio needed)."""
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +131,23 @@ class FakeClient:
         return self._response
 
 
-@pytest.mark.asyncio
-async def test_token_count_uses_content_length_not_chunk_count():
+def _replay(**kwargs):
+    """Shorthand: call _replay_one_request with sensible defaults, run sync."""
+    defaults = dict(
+        client=None,
+        url="http://test/v1/chat/completions",
+        model="test",
+        headers={},
+        messages=[{"role": "user", "content": "test"}],
+        max_tokens=512,
+        seq=0,
+        timeout=30.0,
+    )
+    defaults.update(kwargs)
+    return _run(_replay_one_request(**defaults))
+
+
+def test_token_count_uses_content_length_not_chunk_count():
     """The old bug: each SSE chunk counted as 1 token.
     With 3 chunks of ~60 chars each, we should get ~45 tokens, not 3."""
     lines = _make_sse_lines([
@@ -138,66 +155,33 @@ async def test_token_count_uses_content_length_not_chunk_count():
         _sse_chunk(content="continuing the explanation with more details "),
         _sse_chunk(content="and finishing up with a final conclusion here"),
     ])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.completion_tokens > 3, (
         f"Got {m.completion_tokens} tokens — still counting chunks as 1 each"
     )
     assert m.completion_tokens > 30
 
 
-@pytest.mark.asyncio
-async def test_usage_completion_tokens_overrides_estimate():
+def test_usage_completion_tokens_overrides_estimate():
     """When the API provides usage.completion_tokens, it should override the estimate."""
     lines = _make_sse_lines(
         [_sse_chunk(content="short response")],
         usage={"prompt_tokens": 10, "completion_tokens": 71},
     )
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.completion_tokens == 71
     assert m.prompt_tokens == 10
 
 
-@pytest.mark.asyncio
-async def test_no_usage_falls_back_to_estimate():
+def test_no_usage_falls_back_to_estimate():
     """Without usage data, fall back to the char-based estimate."""
     text = "a" * 80  # 80 chars -> 20 estimated tokens
     lines = _make_sse_lines([_sse_chunk(content=text)])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.completion_tokens == 20
 
 
-@pytest.mark.asyncio
-async def test_stream_options_include_usage_in_payload():
+def test_stream_options_include_usage_in_payload():
     """Payload should include stream_options: {include_usage: true}."""
     captured_payload = {}
 
@@ -206,17 +190,7 @@ async def test_stream_options_include_usage_in_payload():
             captured_payload.update(json or {})
             return FakeStreamResponse(_make_sse_lines([_sse_chunk(content="ok")]))
 
-    client = CapturingClient()
-    await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    _replay(client=CapturingClient())
     assert "stream_options" in captured_payload
     assert captured_payload["stream_options"]["include_usage"] is True
 
@@ -226,68 +200,35 @@ async def test_stream_options_include_usage_in_payload():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_reasoning_content_field():
+def test_reasoning_content_field():
     """Anthropic/DeepSeek convention: delta.reasoning_content."""
     lines = _make_sse_lines([
         _sse_chunk(reasoning="Let me think about this problem carefully"),
         _sse_chunk(content="The answer is 42"),
     ])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.thinking_tokens > 0
     assert m.ttft_thinking_ms > 0
     assert m.ttft_visible_ms > 0
 
 
-@pytest.mark.asyncio
-async def test_reasoning_field_together_convention():
+def test_reasoning_field_together_convention():
     """Together/GLM convention: delta.reasoning (not reasoning_content)."""
     lines = _make_sse_lines([
         _sse_chunk_reasoning_field("Step 1: analyze the problem carefully"),
         _sse_chunk(content="Final answer is here"),
     ])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.thinking_tokens > 0, "Together-style 'reasoning' field was not counted"
     assert m.ttft_thinking_ms > 0
 
 
-@pytest.mark.asyncio
-async def test_no_reasoning_tokens_when_content_only():
+def test_no_reasoning_tokens_when_content_only():
     """Regular (non-reasoning) response should have zero thinking tokens."""
     lines = _make_sse_lines([
         _sse_chunk(content="Just a normal response without thinking"),
     ])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.thinking_tokens == 0
     assert m.ttft_thinking_ms == 0
 
@@ -297,28 +238,15 @@ async def test_no_reasoning_tokens_when_content_only():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_http_429_records_error_when_retries_disabled():
+def test_http_429_records_error_when_retries_disabled():
     """With max_retries=0 (default), 429 is recorded as an error, no retry."""
     resp = FakeStreamResponse([], status_code=429, body=b"rate limited")
-    client = FakeClient(resp)
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-        max_retries=0,
-    )
+    m = _replay(client=FakeClient(resp), max_retries=0)
     assert m.error is not None
     assert "429" in m.error
 
 
-@pytest.mark.asyncio
-async def test_http_429_retries_then_succeeds():
+def test_http_429_retries_then_succeeds():
     """With retries enabled, 429 should be retried with backoff."""
     call_count = 0
 
@@ -333,24 +261,13 @@ async def test_http_429_retries_then_succeeds():
             )
 
     with patch("agentic_swarm_bench.workloads.player.asyncio.sleep", new_callable=AsyncMock):
-        m = await _replay_one_request(
-            client=RetryClient(),
-            url="http://test/v1/chat/completions",
-            model="test",
-            headers={},
-            messages=[{"role": "user", "content": "test"}],
-            max_tokens=512,
-            seq=0,
-            timeout=30.0,
-            max_retries=2,
-        )
+        m = _replay(client=RetryClient(), max_retries=2)
     assert call_count == 2
     assert m.error is None
     assert m.completion_tokens > 0
 
 
-@pytest.mark.asyncio
-async def test_stream_options_retry_on_rejection():
+def test_stream_options_retry_on_rejection():
     """If a provider rejects stream_options, retry without it."""
     call_count = 0
     captured_payloads = []
@@ -369,25 +286,14 @@ async def test_stream_options_retry_on_rejection():
                 _make_sse_lines([_sse_chunk(content="ok without stream_options")])
             )
 
-    m = await _replay_one_request(
-        client=RejectStreamOptionsClient(),
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-        max_retries=1,
-    )
+    m = _replay(client=RejectStreamOptionsClient(), max_retries=1)
     assert call_count == 2
     assert "stream_options" in captured_payloads[0]
     assert "stream_options" not in captured_payloads[1]
     assert m.error is None
 
 
-@pytest.mark.asyncio
-async def test_http_500_not_retried():
+def test_http_500_not_retried():
     """Non-429/non-stream_options errors should not be retried."""
     call_count = 0
 
@@ -397,23 +303,12 @@ async def test_http_500_not_retried():
             call_count += 1
             return FakeStreamResponse([], status_code=500, body=b"internal error")
 
-    m = await _replay_one_request(
-        client=Error500Client(),
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-        max_retries=3,
-    )
+    m = _replay(client=Error500Client(), max_retries=3)
     assert call_count == 1
     assert "500" in m.error
 
 
-@pytest.mark.asyncio
-async def test_429_exhausts_all_retries():
+def test_429_exhausts_all_retries():
     """If every attempt gets 429, we should see max_retries+1 attempts and an error."""
     call_count = 0
 
@@ -424,17 +319,7 @@ async def test_429_exhausts_all_retries():
             return FakeStreamResponse([], status_code=429, body=b"rate limited")
 
     with patch("agentic_swarm_bench.workloads.player.asyncio.sleep", new_callable=AsyncMock):
-        m = await _replay_one_request(
-            client=Always429Client(),
-            url="http://test/v1/chat/completions",
-            model="test",
-            headers={},
-            messages=[{"role": "user", "content": "test"}],
-            max_tokens=512,
-            seq=0,
-            timeout=30.0,
-            max_retries=2,
-        )
+        m = _replay(client=Always429Client(), max_retries=2)
     assert call_count == 3  # initial + 2 retries
     assert m.error is not None
     assert "429" in m.error
@@ -445,8 +330,7 @@ async def test_429_exhausts_all_retries():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_openai_endpoint_uses_max_completion_tokens():
+def test_openai_endpoint_uses_max_completion_tokens():
     """OpenAI endpoints should use max_completion_tokens, not max_tokens."""
     captured_payload = {}
 
@@ -455,22 +339,17 @@ async def test_openai_endpoint_uses_max_completion_tokens():
             captured_payload.update(json or {})
             return FakeStreamResponse(_make_sse_lines([_sse_chunk(content="ok")]))
 
-    await _replay_one_request(
+    _replay(
         client=CapturingClient(),
         url="https://api.openai.com/v1/chat/completions",
         model="gpt-5.4",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
         max_tokens=1024,
-        seq=0,
-        timeout=30.0,
     )
     assert "max_completion_tokens" in captured_payload
     assert "max_tokens" not in captured_payload
 
 
-@pytest.mark.asyncio
-async def test_non_openai_endpoint_uses_max_tokens():
+def test_non_openai_endpoint_uses_max_tokens():
     """Non-OpenAI endpoints should use max_tokens."""
     captured_payload = {}
 
@@ -479,22 +358,17 @@ async def test_non_openai_endpoint_uses_max_tokens():
             captured_payload.update(json or {})
             return FakeStreamResponse(_make_sse_lines([_sse_chunk(content="ok")]))
 
-    await _replay_one_request(
+    _replay(
         client=CapturingClient(),
         url="https://api.anthropic.com/v1/chat/completions",
         model="claude",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
         max_tokens=1024,
-        seq=0,
-        timeout=30.0,
     )
     assert "max_tokens" in captured_payload
     assert "max_completion_tokens" not in captured_payload
 
 
-@pytest.mark.asyncio
-async def test_max_tokens_capped_at_4096():
+def test_max_tokens_capped_at_4096():
     """max_tokens should be capped at 4096 regardless of input."""
     captured_payload = {}
 
@@ -503,16 +377,7 @@ async def test_max_tokens_capped_at_4096():
             captured_payload.update(json or {})
             return FakeStreamResponse(_make_sse_lines([_sse_chunk(content="ok")]))
 
-    await _replay_one_request(
-        client=CapturingClient(),
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=16384,
-        seq=0,
-        timeout=30.0,
-    )
+    _replay(client=CapturingClient(), max_tokens=16384)
     assert captured_payload["max_tokens"] == 4096
 
 
@@ -616,49 +481,29 @@ class TestSliceEntries:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_ttft_and_tok_per_sec_computed():
+def test_ttft_and_tok_per_sec_computed():
     """Verify that TTFT and tok/s are computed on a successful stream."""
     lines = _make_sse_lines([
         _sse_chunk(content="hello world response with enough tokens to measure"),
     ])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.ttft_ms > 0
     assert m.total_time_s > 0
     assert m.error is None
 
 
-@pytest.mark.asyncio
-async def test_context_tokens_estimated_from_messages():
+def test_context_tokens_estimated_from_messages():
     """context_tokens should be estimated from message content length."""
     content = "x" * 800  # 200 estimated tokens
     lines = _make_sse_lines([_sse_chunk(content="ok")])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
+    m = _replay(
+        client=FakeClient(FakeStreamResponse(lines)),
         messages=[{"role": "user", "content": content}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
     )
     assert m.context_tokens == 200
 
 
-@pytest.mark.asyncio
-async def test_timeout_records_error():
+def test_timeout_records_error():
     """Wall-clock timeout should produce an error metric."""
 
     class HangingResponse:
@@ -678,40 +523,19 @@ async def test_timeout_records_error():
         def stream(self, method, url, **kwargs):
             return HangingResponse()
 
-    m = await _replay_one_request(
-        client=HangingClient(),
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=0.01,
-    )
+    m = _replay(client=HangingClient(), timeout=0.01)
     assert m.error is not None
     assert "timeout" in m.error.lower() or "Timeout" in m.error
 
 
-@pytest.mark.asyncio
-async def test_empty_stream_returns_zero_tokens():
+def test_empty_stream_returns_zero_tokens():
     """A stream that sends no content chunks should have 0 completion tokens."""
     lines = _make_sse_lines([])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.completion_tokens == 0
 
 
-@pytest.mark.asyncio
-async def test_mixed_content_and_reasoning_tokens():
+def test_mixed_content_and_reasoning_tokens():
     """Both content tokens and reasoning tokens should be counted separately."""
     reasoning_text = "Let me think step by step about this problem"
     content_text = "The answer is forty two"
@@ -719,17 +543,7 @@ async def test_mixed_content_and_reasoning_tokens():
         _sse_chunk(reasoning=reasoning_text),
         _sse_chunk(content=content_text),
     ])
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     expected_reasoning = _estimate_tokens(reasoning_text)
     expected_total = expected_reasoning + _estimate_tokens(content_text)
 
@@ -737,24 +551,13 @@ async def test_mixed_content_and_reasoning_tokens():
     assert m.completion_tokens == expected_total
 
 
-@pytest.mark.asyncio
-async def test_malformed_json_in_sse_is_skipped():
+def test_malformed_json_in_sse_is_skipped():
     """Malformed JSON in SSE should be silently skipped, not crash."""
     lines = [
         "data: {invalid json}",
         f"data: {json.dumps(_sse_chunk(content='valid chunk'))}",
         "data: [DONE]",
     ]
-    client = FakeClient(FakeStreamResponse(lines))
-    m = await _replay_one_request(
-        client=client,
-        url="http://test/v1/chat/completions",
-        model="test",
-        headers={},
-        messages=[{"role": "user", "content": "test"}],
-        max_tokens=512,
-        seq=0,
-        timeout=30.0,
-    )
+    m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.error is None
     assert m.completion_tokens > 0

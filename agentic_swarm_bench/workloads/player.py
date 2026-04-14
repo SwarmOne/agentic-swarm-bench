@@ -119,7 +119,7 @@ async def _replay_one_request(
                     body_text = body.decode()[:500]
                     if "stream_options" in body_text.lower():
                         drop_stream_options = True
-                        metrics.error = f"RETRY_STREAM_OPTIONS"
+                        metrics.error = "RETRY_STREAM_OPTIONS"
                         return
                     metrics.error = f"HTTP {resp.status_code}: {body_text}"
                     return
