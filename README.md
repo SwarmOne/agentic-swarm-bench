@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/swarmone/agentic-swarm-bench/main/assets/logo.png" alt="AgenticSwarmBench" width="640" />
+  <img src="https://raw.githubusercontent.com/SwarmOne/agentic-swarm-bench/main/assets/logo.png" alt="AgenticSwarmBench" width="640" />
 </p>
 
 <p align="center">
   <strong>The open-source benchmark for LLM inference under agentic swarm workloads</strong><br>
-  Created by <a href="https://swarmone.ai"><img src="https://raw.githubusercontent.com/swarmone/agentic-swarm-bench/main/assets/swarmone-logo.svg" alt="SwarmOne" height="20" style="vertical-align: middle;" /></a> — the AI-native cloud for agentic workloads
+  Created by <a href="https://swarmone.ai"><img src="https://raw.githubusercontent.com/SwarmOne/agentic-swarm-bench/main/assets/swarmone-logo.svg" alt="SwarmOne" height="20" style="vertical-align: middle;" /></a> - the AI-native cloud for agentic workloads
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/swarmone/agentic-swarm-bench/main/assets/demo.gif" alt="AgenticSwarmBench demo" width="720" />
+  <img src="https://raw.githubusercontent.com/SwarmOne/agentic-swarm-bench/main/assets/demo.gif" alt="AgenticSwarmBench demo" width="720" />
 </p>
 
 ---
@@ -43,17 +43,17 @@ When Claude Code opens a file, reads 2,000 lines, edits three functions, runs te
 
 **AgenticSwarmBench fills that gap** - it benchmarks your LLM serving stack under the exact access patterns that Claude Code, Cursor, Windsurf, and Copilot generate.
 
-| What makes it different        |                                                                                                                                                               |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What makes it different        |                                                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Agentic swarm context**      | Pads requests with real-looking agentic sessions - system prompts with tool definitions, prior conversation turns, code files, tool call results, error traces |
-| **Growing context simulation** | Profiles simulate how context grows during a real coding session: fresh (6K) → short (20K) → medium (40K) → long (70K) → full (100K) → xl (200K) → xxl (400K) |
-| **Prefix cache defeat**        | Unique per-request salt ensures you measure true cold-start inference, not cache hits                                                                         |
-| **Cache impact measurement**   | `--cache-mode both` runs cold + warm to show exact prefix cache speedup (10x cost difference on Anthropic)                                                    |
-| **Reasoning token detection**  | Automatically detects thinking/reasoning tokens (DeepSeek R1, o3, Claude Extended Thinking) and reports thinking overhead vs visible output latency           |
-| **110 agentic swarm tasks**    | 5 difficulty tiers, 5 languages (Python, TypeScript, Rust, Go, SQL) - from single-function fixes to full-stack refactors                                      |
-| **Record & replay**            | Capture real coding sessions as replayable workloads, then benchmark them against any endpoint                                                                |
-| **Five CLI modes**             | Speed, eval, agent, record, and replay - plus reporting and comparison                                                                                        |
-| **Docker one-liner**           | Point at any vLLM / SGLang / TGI / OpenAI-compatible endpoint and go                                                                                          |
+| **Growing context simulation** | Profiles simulate how context grows during a real coding session: fresh (6K) → short (20K) → medium (40K) → long (70K) → full (100K) → xl (200K) → xxl (400K)  |
+| **Prefix cache defeat**        | Unique per-request salt ensures you measure true cold-start inference, not cache hits                                                                          |
+| **Cache impact measurement**   | `--cache-mode both` runs cold + warm to show exact prefix cache speedup (10x cost difference on Anthropic)                                                     |
+| **Reasoning token detection**  | Automatically detects thinking/reasoning tokens (DeepSeek R1, o3, Claude Extended Thinking) and reports thinking overhead vs visible output latency            |
+| **110 agentic swarm tasks**    | 5 difficulty tiers, 5 languages (Python, TypeScript, Rust, Go, SQL) - from single-function fixes to full-stack refactors                                       |
+| **Record & replay**            | Capture real coding sessions as replayable workloads, then benchmark them against any endpoint                                                                 |
+| **Five CLI modes**             | Speed, eval, agent, record, and replay - plus reporting and comparison                                                                                         |
+| **Docker one-liner**           | Point at any vLLM / SGLang / TGI / OpenAI-compatible endpoint and go                                                                                           |
 
 ---
 

@@ -384,7 +384,7 @@ def _print_failure_details(failures: list) -> None:
     if ctx_len:
         console.print(
             f"    [{WARN_COLOR}]{len(ctx_len)} request(s) exceeded the model's"
-            f" context window — use --model-context-length to skip them[/{WARN_COLOR}]"
+            f" context window - use --model-context-length to skip them[/{WARN_COLOR}]"
         )
     for r in other_error:
         console.print(f"    [{ERR_COLOR}]✗ {r.task_id}: {r.error[:120]}[/{ERR_COLOR}]")

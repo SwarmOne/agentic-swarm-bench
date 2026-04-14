@@ -508,7 +508,7 @@ def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int 
 
     if not run.scenarios:
         console.print(
-            "\n  [yellow]No requests were sent — all were skipped or filtered out.[/yellow]"
+            "\n  [yellow]No requests were sent - all were skipped or filtered out.[/yellow]"
         )
         console.print(
             "  [yellow]Try a larger --model-context-length or a different workload.[/yellow]"
