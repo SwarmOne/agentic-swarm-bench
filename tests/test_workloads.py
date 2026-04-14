@@ -290,6 +290,7 @@ def _make_varied_workload_file(tmp_path):
 def test_replay_user_session_skips_oversized_requests(tmp_path):
     """_replay_user_session should skip entries exceeding model_context_length."""
     import asyncio
+
     from agentic_coding_bench.workloads.player import _replay_user_session
     from agentic_coding_bench.workloads.registry import load_workload
 
@@ -322,6 +323,7 @@ def test_replay_user_session_skips_oversized_requests(tmp_path):
 def test_replay_user_session_no_skip_without_limit(tmp_path):
     """Without model_context_length, _replay_user_session attempts all entries."""
     import asyncio
+
     from agentic_coding_bench.workloads.player import _replay_user_session
     from agentic_coding_bench.workloads.registry import load_workload
 
