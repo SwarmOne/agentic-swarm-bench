@@ -1,0 +1,44 @@
+services:
+  agentic-swarm-bench:
+    build: .
+    image: swarmone/agentic-swarm-bench:latest
+    volumes:
+      - ./results:/results
+    environment:
+      ASB_ENDPOINT: ${ASB_ENDPOINT:-http://host.docker.internal:8000}
+      ASB_MODEL: ${ASB_MODEL:-default}
+      ASB_API_KEY: ${ASB_API_KEY:-}
+    command:
+      - speed
+      - -e
+      - ${ASB_ENDPOINT:-http://host.docker.internal:8000}
+      - -m
+      - ${ASB_MODEL:-default}
+      - --suite
+      - quick
+      - -o
+      - /results/report.md
+
+  proxy:
+    build: .
+    image: swarmone/agentic-swarm-bench:latest
+    ports:
+      - "19000:19000"
+    environment:
+      ASB_ENDPOINT: ${ASB_ENDPOINT:-http://host.docker.internal:8000}
+      ASB_MODEL: ${ASB_MODEL:-default}
+      ASB_API_KEY: ${ASB_API_KEY:-}
+    volumes:
+      - ./traces:/traces
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        from agentic_swarm_bench.proxy.server import run_proxy
+        import os
+        run_proxy(
+            upstream_url=os.environ.get('ASB_ENDPOINT', 'http://host.docker.internal:8000'),
+            port=19000,
+            model=os.environ.get('ASB_MODEL', 'default'),
+            api_key=os.environ.get('ASB_API_KEY', ''),
+            log_dir='/traces',
+        )
