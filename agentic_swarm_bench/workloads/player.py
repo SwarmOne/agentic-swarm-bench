@@ -46,6 +46,11 @@ def _build_headers(config: BenchmarkConfig) -> dict:
     return headers
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 chars per token for English text."""
+    return max(1, len(text) // 4) if text else 0
+
+
 async def _replay_one_request(
     client: httpx.AsyncClient,
     url: str,
@@ -57,8 +62,13 @@ async def _replay_one_request(
     timeout: float,
     user_id: int = 0,
     on_complete=None,
+    max_retries: int = 0,
 ) -> RequestMetrics:
-    """Replay a single recorded request and collect timing metrics."""
+    """Replay a single recorded request and collect timing metrics.
+
+    Retries automatically on HTTP 429 (rate limit) with exponential backoff.
+    Counts tokens from content length, not SSE chunk count.
+    """
     metrics = RequestMetrics(
         request_id=seq,
         user_id=user_id,
@@ -66,86 +76,137 @@ async def _replay_one_request(
         context_tokens=sum(len(m.get("content", "")) for m in messages) // 4,
     )
 
+    capped_tokens = min(max_tokens, 4096)
+    token_limit_key = "max_completion_tokens" if "api.openai.com" in url else "max_tokens"
     payload = {
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
+        token_limit_key: capped_tokens,
         "temperature": 0.7,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
 
-    start = time.perf_counter()
-    first_token_time = None
-    first_thinking_time = None
-    first_visible_time = None
-    last_token_time = start
-    token_count = 0
+    usage_completion_tokens: int | None = None
+    drop_stream_options = False
 
-    try:
-        async with client.stream(
-            "POST", url, json=payload, headers=headers, timeout=timeout
-        ) as resp:
-            if resp.status_code != 200:
-                body = await resp.aread()
-                metrics.error = f"HTTP {resp.status_code}: {body.decode()[:500]}"
-                if on_complete:
-                    on_complete()
-                return metrics
+    for attempt in range(max_retries + 1):
+        start = time.perf_counter()
+        first_token_time = None
+        first_thinking_time = None
+        first_visible_time = None
+        last_token_time = start
+        token_count = 0
+        thinking_token_count = 0
+        metrics.itl_ms = []
+        metrics.error = None
+        usage_completion_tokens = None
 
-            async for line in resp.aiter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line[6:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+        if drop_stream_options:
+            payload.pop("stream_options", None)
 
-                usage = chunk.get("usage")
-                if usage:
-                    metrics.prompt_tokens = usage.get("prompt_tokens", 0)
+        async def _do_stream():
+            nonlocal usage_completion_tokens, drop_stream_options
+            async with client.stream(
+                "POST", url, json=payload, headers=headers, timeout=timeout
+            ) as resp:
+                if resp.status_code == 429:
+                    body = await resp.aread()
+                    metrics.error = f"HTTP 429: {body.decode()[:500]}"
+                    return
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    body_text = body.decode()[:500]
+                    if "stream_options" in body_text.lower():
+                        drop_stream_options = True
+                        metrics.error = f"RETRY_STREAM_OPTIONS"
+                        return
+                    metrics.error = f"HTTP {resp.status_code}: {body_text}"
+                    return
 
-                for choice in chunk.get("choices", []):
-                    delta = choice.get("delta", {})
-                    content = delta.get("content")
-                    reasoning = delta.get("reasoning_content")
-                    if not content and not reasoning:
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
                         continue
 
-                    now = time.perf_counter()
-                    if first_token_time is None:
-                        first_token_time = now
-                        metrics.ttft_ms = (now - start) * 1000
-                    else:
-                        metrics.itl_ms.append((now - last_token_time) * 1000)
-                    last_token_time = now
-                    token_count += 1
+                    usage = chunk.get("usage")
+                    if usage:
+                        metrics.prompt_tokens = usage.get("prompt_tokens", 0)
+                        if "completion_tokens" in usage:
+                            usage_completion_tokens = usage["completion_tokens"]
 
-                    if reasoning:
-                        metrics.thinking_tokens += 1
-                        if first_thinking_time is None:
-                            first_thinking_time = now
-                            metrics.ttft_thinking_ms = (now - start) * 1000
-                    if content and first_visible_time is None:
-                        first_visible_time = now
-                        metrics.ttft_visible_ms = (now - start) * 1000
+                    for choice in chunk.get("choices", []):
+                        delta = choice.get("delta", {})
+                        content = delta.get("content")
+                        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                        if not content and not reasoning:
+                            continue
 
-    except Exception as e:
-        metrics.error = f"{type(e).__name__}: {str(e)[:500]}"
-        if on_complete:
-            on_complete()
-        return metrics
+                        nonlocal first_token_time, first_thinking_time, first_visible_time
+                        nonlocal last_token_time, token_count, thinking_token_count
+
+                        now = time.perf_counter()
+                        chunk_tokens = _estimate_tokens(content or reasoning or "")
+                        if first_token_time is None:
+                            first_token_time = now
+                            metrics.ttft_ms = (now - start) * 1000
+                        else:
+                            metrics.itl_ms.append((now - last_token_time) * 1000)
+                        last_token_time = now
+                        token_count += chunk_tokens
+
+                        if reasoning:
+                            thinking_token_count += chunk_tokens
+                            if first_thinking_time is None:
+                                first_thinking_time = now
+                                metrics.ttft_thinking_ms = (now - start) * 1000
+                        if content and first_visible_time is None:
+                            first_visible_time = now
+                            metrics.ttft_visible_ms = (now - start) * 1000
+
+        try:
+            await asyncio.wait_for(_do_stream(), timeout=timeout)
+        except asyncio.TimeoutError:
+            metrics.error = f"Wall-clock timeout after {timeout}s"
+            if on_complete:
+                on_complete()
+            return metrics
+        except Exception as e:
+            metrics.error = f"{type(e).__name__}: {str(e)[:500]}"
+            if on_complete:
+                on_complete()
+            return metrics
+
+        if metrics.error and attempt < max_retries:
+            if metrics.error.startswith("HTTP 429"):
+                backoff = 2 + attempt * 3
+                await asyncio.sleep(backoff)
+                continue
+            if metrics.error == "RETRY_STREAM_OPTIONS":
+                continue
+        break
 
     end = time.perf_counter()
     metrics.total_time_s = end - start
-    metrics.completion_tokens = token_count
 
-    if token_count > 0 and first_token_time is not None:
+    if usage_completion_tokens is not None:
+        metrics.completion_tokens = usage_completion_tokens
+    else:
+        metrics.completion_tokens = token_count
+
+    metrics.thinking_tokens = thinking_token_count
+
+    effective_tokens = metrics.completion_tokens
+    if effective_tokens > 0 and first_token_time is not None:
         metrics.decode_time_s = end - first_token_time
         if metrics.decode_time_s > 0:
-            metrics.tok_per_sec = token_count / metrics.decode_time_s
+            metrics.tok_per_sec = effective_tokens / metrics.decode_time_s
 
     if metrics.ttft_ms > 0 and metrics.prompt_tokens > 0:
         metrics.prefill_tok_per_sec = metrics.prompt_tokens / (metrics.ttft_ms / 1000)

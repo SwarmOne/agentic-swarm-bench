@@ -148,11 +148,11 @@ class BenchmarkConfig:
 def resolve_endpoint(endpoint: str) -> str:
     """Normalize the endpoint URL.
 
-    If the URL already contains /v1/chat/completions, use it as-is.
+    If the URL already contains /chat/completions, use it as-is.
     Otherwise, append /v1/chat/completions.
     """
     endpoint = endpoint.rstrip("/")
-    if endpoint.endswith("/v1/chat/completions"):
+    if endpoint.endswith("/chat/completions"):
         return endpoint
     if endpoint.endswith("/v1"):
         return endpoint + "/chat/completions"

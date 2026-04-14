@@ -1,8 +1,9 @@
-"""Tests for configuration management."""
+"""Tests for configuration management and endpoint resolution."""
 
 from agentic_swarm_bench.config import (
     BenchmarkConfig,
     build_config,
+    resolve_endpoint,
 )
 
 
@@ -102,3 +103,56 @@ def test_build_config_cli_overrides_yaml(tmp_path):
         cli_args={"model": "cli-model"},
     )
     assert cfg.model == "cli-model"
+
+
+# ---------------------------------------------------------------------------
+# resolve_endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestResolveEndpoint:
+    """Endpoint resolution: normalize URLs to /chat/completions."""
+
+    def test_bare_url_appends_v1_chat_completions(self):
+        assert resolve_endpoint("http://localhost:8000") == (
+            "http://localhost:8000/v1/chat/completions"
+        )
+
+    def test_url_ending_with_v1_appends_chat_completions(self):
+        assert resolve_endpoint("http://localhost:8000/v1") == (
+            "http://localhost:8000/v1/chat/completions"
+        )
+
+    def test_url_already_has_v1_chat_completions(self):
+        url = "http://localhost:8000/v1/chat/completions"
+        assert resolve_endpoint(url) == url
+
+    def test_gemini_endpoint_not_doubled(self):
+        """The Gemini fix: URL already ends with /chat/completions (no /v1 prefix).
+        Must NOT append /v1/chat/completions again."""
+        url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        assert resolve_endpoint(url) == url
+
+    def test_custom_path_ending_with_chat_completions(self):
+        url = "https://myproxy.example.com/custom/path/chat/completions"
+        assert resolve_endpoint(url) == url
+
+    def test_trailing_slash_stripped(self):
+        assert resolve_endpoint("http://localhost:8000/") == (
+            "http://localhost:8000/v1/chat/completions"
+        )
+
+    def test_v1_trailing_slash_stripped(self):
+        assert resolve_endpoint("http://localhost:8000/v1/") == (
+            "http://localhost:8000/v1/chat/completions"
+        )
+
+    def test_openai_api(self):
+        assert resolve_endpoint("https://api.openai.com") == (
+            "https://api.openai.com/v1/chat/completions"
+        )
+
+    def test_openai_api_v1(self):
+        assert resolve_endpoint("https://api.openai.com/v1") == (
+            "https://api.openai.com/v1/chat/completions"
+        )
