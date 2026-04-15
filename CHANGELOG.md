@@ -2,6 +2,18 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [2.0.0] - 2026-04-15
+
+### Changed
+
+- **Scenarios instead of workloads:** recording/replay/listing now live under `agentic_swarm_bench.scenarios` (recorder, player, registry, schedule, poison) with built-in scenario data shipped in `scenarios/data/`.
+- **CLI:** `asb list-workloads` is now **`asb list-scenarios`**. Help text and docs use scenario terminology throughout.
+- **Saved runs / reports:** speed-benchmark results use a **`scenarios`** list on the run object and in JSON exports (replacing the old workloads-oriented shape where applicable).
+
+### Removed
+
+- **`agentic_swarm_bench.workloads`** and the **`asb list-workloads`** command. Migrate imports to `agentic_swarm_bench.scenarios` and update any automation that parsed workload-specific fields or paths.
+
 ## [1.0.0] - 2026-04-13
 
 ### Added

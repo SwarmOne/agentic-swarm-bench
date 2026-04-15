@@ -1,3 +1,3 @@
 """AgenticSwarmBench: Benchmark LLM inference under agentic scenarios."""
 
-__version__ = "1.0.1"
+__version__ = "2.0.0"
