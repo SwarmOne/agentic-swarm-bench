@@ -568,14 +568,19 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
 
     if a_wins > b_wins:
         lines.append(
-            f"\n> **Baseline** (`{run_a.model}`) wins **{a_wins}/{n_valid}** scenarios{failure_note}\n"
+            f"\n> **Baseline** (`{run_a.model}`) wins "
+            f"**{a_wins}/{n_valid}** scenarios{failure_note}\n"
         )
     elif b_wins > a_wins:
         lines.append(
-            f"\n> **Candidate** (`{run_b.model}`) wins **{b_wins}/{n_valid}** scenarios{failure_note}\n"
+            f"\n> **Candidate** (`{run_b.model}`) wins "
+            f"**{b_wins}/{n_valid}** scenarios{failure_note}\n"
         )
     elif n_valid == 0:
-        lines.append("\n> No valid comparison scenarios (all requests failed on one or both sides)\n")
+        lines.append(
+            "\n> No valid comparison scenarios"
+            " (all requests failed on one or both sides)\n"
+        )
     else:
         lines.append(f"\n> **Tied** across {total_label} scenarios{failure_note}\n")
 

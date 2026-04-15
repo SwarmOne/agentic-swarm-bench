@@ -68,8 +68,8 @@ def main(ctx, config):
 
 
 @main.command()
-@click.option("--endpoint", "-e", default=None, help="Any OpenAI-compatible URL (or set ASB_ENDPOINT)")
-@click.option("--model", "-m", default=None, help="Model name to use in requests (or set ASB_MODEL)")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--model", "-m", default=None, help="Model name for requests (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key (or set ASB_API_KEY)")
 @click.option(
     "--api-key-header",
@@ -198,7 +198,7 @@ def speed(
 
 
 @main.command()
-@click.option("--endpoint", "-e", default=None, help="Any OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
 @click.option("--model", "-m", default=None, help="Model name (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key")
 @click.option(
@@ -245,7 +245,7 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
 
 
 @main.command()
-@click.option("--endpoint", "-e", default=None, help="Any OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
 @click.option("--model", "-m", default=None, help="Model name to report as (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key for upstream")
 @click.option(
@@ -371,8 +371,8 @@ def list_tasks(tasks, tags, fmt):
 
 
 @main.command()
-@click.option("--endpoint", "-e", default=None, help="Upstream LLM endpoint URL (or set ASB_ENDPOINT)")
-@click.option("--model", "-m", default=None, help="Model name at the upstream endpoint (or set ASB_MODEL)")
+@click.option("--endpoint", "-e", default=None, help="Upstream LLM URL (or set ASB_ENDPOINT)")
+@click.option("--model", "-m", default=None, help="Model name at upstream (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key for upstream")
 @click.option(
     "--api-key-header",
@@ -429,7 +429,7 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 
 
 @main.command()
-@click.option("--endpoint", "-e", default=None, help="Target OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
 @click.option("--model", "-m", default=None, help="Model name (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key")
 @click.option(

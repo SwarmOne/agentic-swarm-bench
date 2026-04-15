@@ -11,15 +11,12 @@ Bug 4: asb list-tasks -t p999 silently returned all 110 tasks instead of errorin
 from __future__ import annotations
 
 import json
-import os
 
-import pytest
 from click.testing import CliRunner
 
 from agentic_swarm_bench.cli import main
 from agentic_swarm_bench.metrics.collector import BenchmarkRun, RequestMetrics, ScenarioResult
 from agentic_swarm_bench.report.markdown import generate_comparison
-
 
 # ---------------------------------------------------------------------------
 # Bug 1 – JSON output is valid JSON
