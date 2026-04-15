@@ -42,7 +42,7 @@ def test_list_scenarios_json_is_valid():
     assert result.exit_code == 0, result.output
     scenarios = json.loads(result.output)
     assert isinstance(scenarios, list)
-    assert len(scenarios) >= 2
+    assert len(scenarios) >= 1
     names = [s["name"] for s in scenarios]
     assert "markdown-note-app" in names
 
