@@ -7,7 +7,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agentic_swarm_bench.metrics.collector import RequestMetrics
-from agentic_swarm_bench.workloads.player import (
+from agentic_swarm_bench.scenarios.player import (
     _bucket_label,
     _compute_bucket_wall_time,
     _estimate_tokens,
@@ -150,14 +150,16 @@ def _replay(**kwargs):
 def test_token_count_uses_content_length_not_chunk_count():
     """The old bug: each SSE chunk counted as 1 token.
     With 3 chunks of ~60 chars each, we should get ~45 tokens, not 3."""
-    lines = _make_sse_lines([
-        _sse_chunk(content="Here is a detailed response with many tokens "),
-        _sse_chunk(content="continuing the explanation with more details "),
-        _sse_chunk(content="and finishing up with a final conclusion here"),
-    ])
+    lines = _make_sse_lines(
+        [
+            _sse_chunk(content="Here is a detailed response with many tokens "),
+            _sse_chunk(content="continuing the explanation with more details "),
+            _sse_chunk(content="and finishing up with a final conclusion here"),
+        ]
+    )
     m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.completion_tokens > 3, (
-        f"Got {m.completion_tokens} tokens — still counting chunks as 1 each"
+        f"Got {m.completion_tokens} tokens - still counting chunks as 1 each"
     )
     assert m.completion_tokens > 30
 
@@ -202,10 +204,12 @@ def test_stream_options_include_usage_in_payload():
 
 def test_reasoning_content_field():
     """Anthropic/DeepSeek convention: delta.reasoning_content."""
-    lines = _make_sse_lines([
-        _sse_chunk(reasoning="Let me think about this problem carefully"),
-        _sse_chunk(content="The answer is 42"),
-    ])
+    lines = _make_sse_lines(
+        [
+            _sse_chunk(reasoning="Let me think about this problem carefully"),
+            _sse_chunk(content="The answer is 42"),
+        ]
+    )
     m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.thinking_tokens > 0
     assert m.ttft_thinking_ms > 0
@@ -214,10 +218,12 @@ def test_reasoning_content_field():
 
 def test_reasoning_field_together_convention():
     """Together/GLM convention: delta.reasoning (not reasoning_content)."""
-    lines = _make_sse_lines([
-        _sse_chunk_reasoning_field("Step 1: analyze the problem carefully"),
-        _sse_chunk(content="Final answer is here"),
-    ])
+    lines = _make_sse_lines(
+        [
+            _sse_chunk_reasoning_field("Step 1: analyze the problem carefully"),
+            _sse_chunk(content="Final answer is here"),
+        ]
+    )
     m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.thinking_tokens > 0, "Together-style 'reasoning' field was not counted"
     assert m.ttft_thinking_ms > 0
@@ -225,9 +231,11 @@ def test_reasoning_field_together_convention():
 
 def test_no_reasoning_tokens_when_content_only():
     """Regular (non-reasoning) response should have zero thinking tokens."""
-    lines = _make_sse_lines([
-        _sse_chunk(content="Just a normal response without thinking"),
-    ])
+    lines = _make_sse_lines(
+        [
+            _sse_chunk(content="Just a normal response without thinking"),
+        ]
+    )
     m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.thinking_tokens == 0
     assert m.ttft_thinking_ms == 0
@@ -256,11 +264,9 @@ def test_http_429_retries_then_succeeds():
             call_count += 1
             if call_count == 1:
                 return FakeStreamResponse([], status_code=429, body=b"rate limited")
-            return FakeStreamResponse(
-                _make_sse_lines([_sse_chunk(content="success after retry")])
-            )
+            return FakeStreamResponse(_make_sse_lines([_sse_chunk(content="success after retry")]))
 
-    with patch("agentic_swarm_bench.workloads.player.asyncio.sleep", new_callable=AsyncMock):
+    with patch("agentic_swarm_bench.scenarios.player.asyncio.sleep", new_callable=AsyncMock):
         m = _replay(client=RetryClient(), max_retries=2)
     assert call_count == 2
     assert m.error is None
@@ -279,7 +285,8 @@ def test_stream_options_retry_on_rejection():
             captured_payloads.append(dict(json or {}))
             if call_count == 1 and "stream_options" in (json or {}):
                 return FakeStreamResponse(
-                    [], status_code=400,
+                    [],
+                    status_code=400,
                     body=b'{"error": "stream_options is not supported"}',
                 )
             return FakeStreamResponse(
@@ -318,7 +325,7 @@ def test_429_exhausts_all_retries():
             call_count += 1
             return FakeStreamResponse([], status_code=429, body=b"rate limited")
 
-    with patch("agentic_swarm_bench.workloads.player.asyncio.sleep", new_callable=AsyncMock):
+    with patch("agentic_swarm_bench.scenarios.player.asyncio.sleep", new_callable=AsyncMock):
         m = _replay(client=Always429Client(), max_retries=2)
     assert call_count == 3  # initial + 2 retries
     assert m.error is not None
@@ -483,9 +490,11 @@ class TestSliceEntries:
 
 def test_ttft_and_tok_per_sec_computed():
     """Verify that TTFT and tok/s are computed on a successful stream."""
-    lines = _make_sse_lines([
-        _sse_chunk(content="hello world response with enough tokens to measure"),
-    ])
+    lines = _make_sse_lines(
+        [
+            _sse_chunk(content="hello world response with enough tokens to measure"),
+        ]
+    )
     m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.ttft_ms > 0
     assert m.total_time_s > 0
@@ -539,10 +548,12 @@ def test_mixed_content_and_reasoning_tokens():
     """Both content tokens and reasoning tokens should be counted separately."""
     reasoning_text = "Let me think step by step about this problem"
     content_text = "The answer is forty two"
-    lines = _make_sse_lines([
-        _sse_chunk(reasoning=reasoning_text),
-        _sse_chunk(content=content_text),
-    ])
+    lines = _make_sse_lines(
+        [
+            _sse_chunk(reasoning=reasoning_text),
+            _sse_chunk(content=content_text),
+        ]
+    )
     m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     expected_reasoning = _estimate_tokens(reasoning_text)
     expected_total = expected_reasoning + _estimate_tokens(content_text)

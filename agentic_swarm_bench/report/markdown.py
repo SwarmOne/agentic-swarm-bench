@@ -59,9 +59,9 @@ def _verdict_for_stats(stats: ScenarioStats) -> str:
 
 def _verdict_label(verdict: str) -> str:
     labels = {
-        "good": "GOOD for agentic swarm workloads",
-        "ok": "MARGINAL for agentic swarm workloads",
-        "poor": "POOR for agentic swarm workloads",
+        "good": "GOOD for agentic swarm scenarios",
+        "ok": "MARGINAL for agentic swarm scenarios",
+        "poor": "POOR for agentic swarm scenarios",
     }
     return labels.get(verdict, "UNKNOWN")
 
@@ -110,7 +110,6 @@ def _metadata_section(run: BenchmarkRun, json_path: str | None = None) -> str:
         "|:--------|:------|",
         f"| **Model** | `{run.model}` |",
         f"| **Endpoint** | `{run.endpoint}` |",
-        f"| **Prefix cache defeat** | {'Enabled' if run.defeat_cache else 'Disabled'} |",
         f"| **Date** | {timestamp} UTC |",
         f"| **Scenarios** | {len(run.scenarios)} |",
     ]
@@ -123,11 +122,7 @@ def _metadata_section(run: BenchmarkRun, json_path: str | None = None) -> str:
 def _verdict_section(all_stats: list[tuple]) -> str:
     successful = [(s, st) for s, st in all_stats if st.successful > 0]
     if not successful:
-        return (
-            "---\n\n"
-            "## Verdict\n\n"
-            "**No successful requests.** Check endpoint configuration.\n"
-        )
+        return "---\n\n## Verdict\n\n**No successful requests.** Check endpoint configuration.\n"
 
     best = None
     for _, st in successful:
@@ -145,8 +140,7 @@ def _verdict_section(all_stats: list[tuple]) -> str:
     lines = [
         "---\n",
         "## Verdict\n",
-        f"> {icon} **{label}** at `{best.context_profile}` "
-        f"context with {best.num_users} user(s)",
+        f"> {icon} **{label}** at `{best.context_profile}` context with {best.num_users} user(s)",
         ">",
         f"> **{_fmt_ms(best.ttft_ms.median)} ms** first token · "
         f"**{best.tok_per_sec.median:.1f}** tok/s/user · "
@@ -298,10 +292,7 @@ def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
 
 def _context_scaling_section(all_stats: list[tuple]) -> str:
     """Show how performance changes as context grows with ASCII mini-chart."""
-    single_user = [
-        (s, st) for s, st in all_stats
-        if st.num_users == 1 and st.successful > 0
-    ]
+    single_user = [(s, st) for s, st in all_stats if st.num_users == 1 and st.successful > 0]
     if len(single_user) < 2:
         return ""
 
@@ -314,8 +305,7 @@ def _context_scaling_section(all_stats: list[tuple]) -> str:
     bar_width = 25
 
     lines.append(
-        f"{'Profile':<10} {'TTFT':>8}  {'':─<{bar_width}}  "
-        f"{'Tok/s':>7}  {'':─<{bar_width}}"
+        f"{'Profile':<10} {'TTFT':>8}  {'':─<{bar_width}}  {'Tok/s':>7}  {'':─<{bar_width}}"
     )
     lines.append(f"{'─' * 10} {'─' * 8}  {'─' * bar_width}  {'─' * 7}  {'─' * bar_width}")
 
@@ -330,15 +320,10 @@ def _context_scaling_section(all_stats: list[tuple]) -> str:
         ttft_bar = "▓" * ttft_len + "░" * (bar_width - ttft_len)
         toks_bar = "█" * toks_len + "░" * (bar_width - toks_len)
 
-        lines.append(
-            f"{profile:<10} {ttft:>7.0f}ms  {ttft_bar}  "
-            f"{toks:>6.1f}  {toks_bar}"
-        )
+        lines.append(f"{profile:<10} {ttft:>7.0f}ms  {ttft_bar}  {toks:>6.1f}  {toks_bar}")
 
     lines.append("```\n")
-    lines.append(
-        "▓ = TTFT (lower is better) · █ = Tok/s/user (higher is better)\n"
-    )
+    lines.append("▓ = TTFT (lower is better) · █ = Tok/s/user (higher is better)\n")
     return "\n".join(lines)
 
 
@@ -388,9 +373,7 @@ def _concurrency_scaling_section(all_stats: list[tuple]) -> str:
 
         for n_users, tps, agg, eff in rows:
             eff_icon = _grade_icon(_grade(eff, 80, 50, lower_is_better=False))
-            lines.append(
-                f"| {n_users} | {tps:.1f} | {agg:.0f} | {eff_icon} {eff:.0f}% |"
-            )
+            lines.append(f"| {n_users} | {tps:.1f} | {agg:.0f} | {eff_icon} {eff:.0f}% |")
         lines.append("")
 
     return "\n".join(lines)
@@ -476,19 +459,19 @@ def _methodology_section(run: BenchmarkRun) -> str:
         ),
     ]
 
-    if run.defeat_cache:
-        lines.extend(
-            [
-                "### Prefix cache defeat\n",
-                (
-                    "Each request includes a unique random salt "
-                    "injected into the context, ensuring that "
-                    "prefix caching cannot mask cold-start "
-                    "prefill costs. Every measurement reflects "
-                    "true inference performance, not cache hits.\n"
-                ),
-            ]
-        )
+    lines.extend(
+        [
+            "### Prefix cache poisoning\n",
+            (
+                "Cold-start measurements use space-doubling to defeat "
+                "prefix caching: isolated spaces in the context are "
+                "randomly doubled, shifting BPE token boundaries and "
+                "invalidating the KV cache without adding artificial "
+                "content. This ensures measurements reflect true "
+                "inference performance, not cache hits.\n"
+            ),
+        ]
+    )
 
     lines.extend(
         [
@@ -547,16 +530,16 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
         if a_tok > 0 and b_tok > 0:
             delta_pct = ((b_tok - a_tok) / a_tok) * 100
             delta_str = f"{delta_pct:+.1f}%"
-            icon = _grade_icon("good") if delta_pct > 5 else (
-                _grade_icon("poor") if delta_pct < -5 else _grade_icon("ok")
+            icon = (
+                _grade_icon("good")
+                if delta_pct > 5
+                else (_grade_icon("poor") if delta_pct < -5 else _grade_icon("ok"))
             )
         else:
             delta_str = "N/A"
             icon = "⚪"
 
-        lines.append(
-            f"| {icon} | {users} | {profile} | {a_tok:.1f} | {b_tok:.1f} | {delta_str} |"
-        )
+        lines.append(f"| {icon} | {users} | {profile} | {a_tok:.1f} | {b_tok:.1f} | {delta_str} |")
 
     lines.append("")
     lines.extend(_ascii_chart(all_keys, stats_a, stats_b))
@@ -575,13 +558,11 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
 
     if a_wins > b_wins:
         lines.append(
-            f"\n> **Baseline** (`{run_a.model}`) wins "
-            f"**{a_wins}/{len(all_keys)}** scenarios\n"
+            f"\n> **Baseline** (`{run_a.model}`) wins **{a_wins}/{len(all_keys)}** scenarios\n"
         )
     elif b_wins > a_wins:
         lines.append(
-            f"\n> **Candidate** (`{run_b.model}`) wins "
-            f"**{b_wins}/{len(all_keys)}** scenarios\n"
+            f"\n> **Candidate** (`{run_b.model}`) wins **{b_wins}/{len(all_keys)}** scenarios\n"
         )
     else:
         lines.append("\n> **Tied** across all scenarios\n")

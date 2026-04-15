@@ -2,6 +2,10 @@
 
 Merges CLI arguments, environment variables, and optional YAML config.
 CLI > env vars > YAML > defaults.
+
+Note: The 'scenarios' list on BenchmarkRun (used in speed mode) refers to
+(num_users, profile, tokens) tuples -- a different concept from the
+Scenario/Task data model used in replay mode.
 """
 
 from __future__ import annotations
@@ -63,7 +67,6 @@ class BenchmarkConfig:
 
     max_output_tokens: int = 512
     repetitions: int = 1
-    defeat_cache: bool = True
     cache_mode: str = "cold"  # cold | warm | both
     timeout: float = 300.0
 
@@ -73,6 +76,7 @@ class BenchmarkConfig:
 
     agent: str = "claude-code"
     proxy_port: int = 19000
+    upstream_api: Optional[str] = None  # "openai" | "anthropic" | None (auto-detect)
 
     verbose: bool = False
 
@@ -91,10 +95,7 @@ class BenchmarkConfig:
         profile_tokens = self._resolve_profile_tokens()
 
         if self.model_context_length is not None:
-            profile_tokens = [
-                (p, t) for p, t in profile_tokens
-                if t <= self.model_context_length
-            ]
+            profile_tokens = [(p, t) for p, t in profile_tokens if t <= self.model_context_length]
 
         return [(u, profile, tokens) for profile, tokens in profile_tokens for u in users]
 
@@ -134,7 +135,6 @@ class BenchmarkConfig:
             context_tokens=_int_or_none(os.getenv("ASB_CONTEXT_TOKENS")),
             context_profile=os.getenv("ASB_CONTEXT_PROFILE"),
             model_context_length=_int_or_none(os.getenv("ASB_MODEL_CONTEXT_LENGTH")),
-            defeat_cache=(os.getenv("ASB_DEFEAT_CACHE", "true").lower() == "true"),
         )
 
     def merge(self, **overrides) -> BenchmarkConfig:

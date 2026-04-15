@@ -145,7 +145,7 @@ async def run_eval(config: BenchmarkConfig) -> None:
                 f"  [{i + 1}/{len(tasks)}] {task['id']}: {task['prompt'][:60]}...", end=" "
             )
 
-            messages = build_messages(task["prompt"], ctx_tokens, defeat_cache=False)
+            messages = build_messages(task["prompt"], ctx_tokens)
             max_tok = task.get("max_output_tokens", config.max_output_tokens)
 
             response = await _get_completion(

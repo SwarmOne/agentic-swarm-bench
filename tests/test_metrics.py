@@ -127,7 +127,6 @@ def test_benchmark_run_serialization(tmp_path):
     run = BenchmarkRun(
         model="test-model",
         endpoint="http://test:8000",
-        defeat_cache=True,
         started_at="2026-04-07T00:00:00",
     )
     scenario = ScenarioResult(
@@ -155,31 +154,37 @@ def test_benchmark_run_serialization(tmp_path):
 class TestIsContextLengthError:
     """Tests for is_context_length_error across various API error formats."""
 
-    @pytest.mark.parametrize("error_msg", [
-        'HTTP 400: {"error":{"message":"prompt is too long: 17357 tokens > 4096 maximum"}}',
-        'HTTP 400: {"error":{"message":"This model\'s maximum context length is 8192 tokens"}}',
-        'HTTP 400: {"error":{"code":"context_length_exceeded"}}',
-        'HTTP 400: {"error":"Too many tokens in the input"}}',
-        'HTTP 400: {"error":"Input is too long for this model"}}',
-        'HTTP 400: {"error":"Request exceeds the model\'s maximum context"}}',
-        'HTTP 400: token limit exceeded',
-        'HTTP 400: max_prompt_length exceeded',
-        'HTTP 400: Please reduce your prompt to fit within the context window',
-        'HTTP 400: Maximum allowed tokens exceeded for this model',
-    ])
+    @pytest.mark.parametrize(
+        "error_msg",
+        [
+            'HTTP 400: {"error":{"message":"prompt is too long: 17357 tokens > 4096 maximum"}}',
+            'HTTP 400: {"error":{"message":"This model\'s maximum context length is 8192 tokens"}}',
+            'HTTP 400: {"error":{"code":"context_length_exceeded"}}',
+            'HTTP 400: {"error":"Too many tokens in the input"}}',
+            'HTTP 400: {"error":"Input is too long for this model"}}',
+            'HTTP 400: {"error":"Request exceeds the model\'s maximum context"}}',
+            "HTTP 400: token limit exceeded",
+            "HTTP 400: max_prompt_length exceeded",
+            "HTTP 400: Please reduce your prompt to fit within the context window",
+            "HTTP 400: Maximum allowed tokens exceeded for this model",
+        ],
+    )
     def test_detects_context_length_errors(self, error_msg):
         assert is_context_length_error(error_msg) is True
 
-    @pytest.mark.parametrize("error_msg", [
-        'HTTP 400: Bad request',
-        'HTTP 401: Unauthorized',
-        'HTTP 429: Rate limit exceeded',
-        'HTTP 500: Internal server error',
-        'ConnectError: Connection refused',
-        'TimeoutError: Request timed out',
-        'HTTP 400: Invalid model name',
-        'HTTP 400: temperature must be between 0 and 2',
-    ])
+    @pytest.mark.parametrize(
+        "error_msg",
+        [
+            "HTTP 400: Bad request",
+            "HTTP 401: Unauthorized",
+            "HTTP 429: Rate limit exceeded",
+            "HTTP 500: Internal server error",
+            "ConnectError: Connection refused",
+            "TimeoutError: Request timed out",
+            "HTTP 400: Invalid model name",
+            "HTTP 400: temperature must be between 0 and 2",
+        ],
+    )
     def test_ignores_non_context_length_errors(self, error_msg):
         assert is_context_length_error(error_msg) is False
 

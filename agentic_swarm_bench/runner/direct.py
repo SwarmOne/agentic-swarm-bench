@@ -29,6 +29,7 @@ from agentic_swarm_bench.metrics.collector import (
     is_context_length_error,
 )
 from agentic_swarm_bench.metrics.stats import ScenarioStats, analyze_scenario
+from agentic_swarm_bench.proxy.padding import poison_messages
 from agentic_swarm_bench.tasks.context.codebase_context import build_messages
 from agentic_swarm_bench.tasks.registry import get_tasks
 
@@ -205,6 +206,7 @@ async def run_scenario(
     progress: Progress | None = None,
     scenario_idx: int = 0,
     total_scenarios: int = 0,
+    defeat_cache: bool = True,
 ) -> ScenarioResult:
     """Run one benchmark scenario: N concurrent users at a given context size."""
     ctx_k = context_tokens // 1000
@@ -236,9 +238,11 @@ async def run_scenario(
                     task_id,
                     completed=completed_count,
                     description=_live_description(
-                        progress_label, token_counts,
+                        progress_label,
+                        token_counts,
                     ),
                 )
+
         return cb
 
     last_progress_update = 0.0
@@ -255,9 +259,11 @@ async def run_scenario(
                 progress.update(
                     task_id,
                     description=_live_description(
-                        progress_label, token_counts,
+                        progress_label,
+                        token_counts,
                     ),
                 )
+
         return cb
 
     coros_args = []
@@ -269,9 +275,10 @@ async def run_scenario(
         msgs = build_messages(
             prompt,
             context_tokens,
-            defeat_cache=config.defeat_cache,
             random_seed=None if not config.random_context else (i + time.time_ns()),
         )
+        if defeat_cache:
+            msgs = poison_messages(msgs, seed=f"speed-{tid}-u{i}-{time.time_ns()}")
         coros_args.append((msgs, max_tok, tid))
 
     async with httpx.AsyncClient() as client:
@@ -444,7 +451,6 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
     run = BenchmarkRun(
         model=config.model,
         endpoint=config.endpoint,
-        defeat_cache=config.defeat_cache,
         started_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -459,9 +465,10 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
     cache_mode = getattr(config, "cache_mode", "cold")
 
     max_context_tokens = max((t for _, _, t in scenarios), default=0)
-    profiles = sorted(set(s[1] for s in scenarios), key=lambda p: next(
-        (t for _, pn, t in scenarios if pn == p), 0
-    ))
+    profiles = sorted(
+        set(s[1] for s in scenarios),
+        key=lambda p: next((t for _, pn, t in scenarios if pn == p), 0),
+    )
     user_counts = sorted(set(s[0] for s in scenarios))
 
     parsed = urlparse(config.endpoint)
@@ -494,13 +501,15 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
             )
 
     console.print()
-    console.print(Panel(
-        header_lines,
-        title="[bold]asb speed[/bold]",
-        title_align="left",
-        border_style=DIM,
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            header_lines,
+            title="[bold]asb speed[/bold]",
+            title_align="left",
+            border_style=DIM,
+            padding=(0, 2),
+        )
+    )
 
     await _check_models_endpoint(config.endpoint, headers)
 
@@ -526,23 +535,20 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
             if len(passes) > 1:
                 console.print(f"\n[bold magenta]Pass: {pass_name}[/bold magenta]")
 
-            patched = _patch_config_cache(config, defeat)
-
             for num_users, profile, tokens in scenarios:
                 scenario_num += 1
                 scenario = await run_scenario(
-                    config=patched,
+                    config=config,
                     url=url,
                     headers=headers,
                     num_users=num_users,
                     context_tokens=tokens,
-                    context_profile=(
-                        f"{profile} ({pass_name})" if len(passes) > 1 else profile
-                    ),
+                    context_profile=(f"{profile} ({pass_name})" if len(passes) > 1 else profile),
                     tasks=tasks,
                     progress=progress,
                     scenario_idx=scenario_num,
                     total_scenarios=total_scenario_count,
+                    defeat_cache=defeat,
                 )
                 run.scenarios.append(scenario)
                 await asyncio.sleep(2)
@@ -566,11 +572,12 @@ def _print_dry_run(
     msg = f"[{WARN_COLOR} bold]DRY RUN - no requests will be sent[/{WARN_COLOR} bold]"
     console.print(f"\n  {msg}\n")
 
+    cache_label = {"cold": "poisoned (cold)", "warm": "allowed (warm)", "both": "cold + warm"}
     rows = [
         ("URL", url),
         ("Auth", config.api_key_header),
         ("Max output", f"{config.max_output_tokens} tokens"),
-        ("Cache", "defeated" if config.defeat_cache else "allowed"),
+        ("Cache", cache_label.get(getattr(config, "cache_mode", "cold"), "poisoned")),
         ("Timeout", f"{config.timeout:.0f}s"),
     ]
     if config.random_context:
@@ -594,12 +601,11 @@ def _print_dry_run(
         user_word = "user" if users == 1 else "users"
         console.print(f"    {profile} · {tokens // 1000}K · {users} {user_word}")
 
-    sample_msgs = build_messages(tasks[0]["prompt"], 6000, defeat_cache=config.defeat_cache)
+    sample_msgs = build_messages(tasks[0]["prompt"], 6000)
     total_chars = sum(len(m["content"]) for m in sample_msgs)
     n_msgs = len(sample_msgs)
     console.print(
-        f"\n  [{DIM}]Sample request (P1 at 6K): "
-        f"~{total_chars:,} chars, {n_msgs} msgs[/{DIM}]"
+        f"\n  [{DIM}]Sample request (P1 at 6K): ~{total_chars:,} chars, {n_msgs} msgs[/{DIM}]"
     )
 
 
@@ -636,12 +642,6 @@ def _get_cache_passes(cache_mode: str) -> list[tuple[str, bool]]:
         return [("warm", False)]
     return [("cold", True)]
 
-
-def _patch_config_cache(config: BenchmarkConfig, defeat: bool) -> BenchmarkConfig:
-    """Return a shallow copy of config with defeat_cache overridden."""
-    from dataclasses import replace
-
-    return replace(config, defeat_cache=defeat)
 
 
 def _derive_json_path(output: str) -> str:
@@ -687,7 +687,10 @@ def _print_summary_table(run: BenchmarkRun) -> None:
                 str(stats.num_users),
                 stats.context_profile,
                 f"[{ERR_COLOR}]FAIL[/{ERR_COLOR}]",
-                "-", "-", "-", "-",
+                "-",
+                "-",
+                "-",
+                "-",
                 f"0/{stats.total_requests}",
             )
             continue
@@ -723,9 +726,7 @@ def _print_summary_table(run: BenchmarkRun) -> None:
     console.print(table)
 
     if verdict_stats is None:
-        successful = [
-            analyze_scenario(s) for s in run.scenarios if len(s.successes) > 0
-        ]
+        successful = [analyze_scenario(s) for s in run.scenarios if len(s.successes) > 0]
         if successful:
             verdict_stats = successful[0]
 
@@ -740,10 +741,7 @@ def _print_summary_table(run: BenchmarkRun) -> None:
         )
 
     ctx_len_failures = sum(
-        1
-        for s in run.scenarios
-        for r in s.failures
-        if is_context_length_error(r.error)
+        1 for s in run.scenarios for r in s.failures if is_context_length_error(r.error)
     )
     if ctx_len_failures:
         console.print(

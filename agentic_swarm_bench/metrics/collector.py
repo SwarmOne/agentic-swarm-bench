@@ -149,7 +149,6 @@ class ScenarioResult:
 class BenchmarkRun:
     model: str = ""
     endpoint: str = ""
-    defeat_cache: bool = True
     started_at: str = ""
     scenarios: list[ScenarioResult] = field(default_factory=list)
 
@@ -161,7 +160,6 @@ class BenchmarkRun:
         return {
             "model": self.model,
             "endpoint": self.endpoint,
-            "defeat_cache": self.defeat_cache,
             "started_at": self.started_at,
             "scenarios": [s.to_dict() for s in self.scenarios],
         }
@@ -180,7 +178,6 @@ class BenchmarkRun:
         run = cls(
             model=data.get("model", ""),
             endpoint=data.get("endpoint", ""),
-            defeat_cache=data.get("defeat_cache", True),
             started_at=data.get("started_at", ""),
         )
         for s_data in data.get("scenarios", []):
