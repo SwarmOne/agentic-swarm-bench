@@ -546,26 +546,38 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
 
     a_wins = 0
     b_wins = 0
+    n_valid = 0  # scenarios where both sides had successful requests
     for key in all_keys:
         a = stats_a.get(key)
         b = stats_b.get(key)
-        a_tok = a.tok_per_sec.median if a and a.successful > 0 else 0
-        b_tok = b.tok_per_sec.median if b and b.successful > 0 else 0
+        a_ok = a is not None and a.successful > 0
+        b_ok = b is not None and b.successful > 0
+        if not (a_ok and b_ok):
+            continue  # skip N/A scenarios from win counting
+        n_valid += 1
+        a_tok = a.tok_per_sec.median
+        b_tok = b.tok_per_sec.median
         if a_tok > b_tok:
             a_wins += 1
         elif b_tok > a_tok:
             b_wins += 1
 
+    n_invalid = len(all_keys) - n_valid
+    failure_note = f" ({n_invalid} scenario(s) excluded: zero completions)" if n_invalid else ""
+    total_label = f"{n_valid}" if not n_invalid else f"{n_valid}/{len(all_keys)} valid"
+
     if a_wins > b_wins:
         lines.append(
-            f"\n> **Baseline** (`{run_a.model}`) wins **{a_wins}/{len(all_keys)}** scenarios\n"
+            f"\n> **Baseline** (`{run_a.model}`) wins **{a_wins}/{n_valid}** scenarios{failure_note}\n"
         )
     elif b_wins > a_wins:
         lines.append(
-            f"\n> **Candidate** (`{run_b.model}`) wins **{b_wins}/{len(all_keys)}** scenarios\n"
+            f"\n> **Candidate** (`{run_b.model}`) wins **{b_wins}/{n_valid}** scenarios{failure_note}\n"
         )
+    elif n_valid == 0:
+        lines.append("\n> No valid comparison scenarios (all requests failed on one or both sides)\n")
     else:
-        lines.append("\n> **Tied** across all scenarios\n")
+        lines.append(f"\n> **Tied** across {total_label} scenarios{failure_note}\n")
 
     lines.extend(
         [
