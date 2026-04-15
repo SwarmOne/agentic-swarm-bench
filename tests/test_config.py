@@ -9,7 +9,6 @@ from agentic_swarm_bench.config import (
 
 def test_default_config():
     cfg = BenchmarkConfig()
-    assert cfg.defeat_cache is True
     assert cfg.timeout == 300.0
     assert cfg.max_output_tokens == 512
 

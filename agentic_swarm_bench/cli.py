@@ -27,7 +27,7 @@ console = Console()
 )
 @click.pass_context
 def main(ctx, config):
-    """AgenticSwarmBench - Benchmark LLM inference under agentic workloads.
+    """AgenticSwarmBench - Benchmark LLM inference under agentic scenarios.
 
     \b
     Modes:
@@ -71,7 +71,9 @@ def main(ctx, config):
 )
 @click.option("--users", "-u", type=int, default=None, help="Number of concurrent users")
 @click.option(
-    "--max-users", type=int, default=None,
+    "--max-users",
+    type=int,
+    default=None,
     help="Cap max concurrent users (filters suite user lists)",
 )
 @click.option(
@@ -90,11 +92,6 @@ def main(ctx, config):
     help="Task range: p1-p25, p51-p75, trivial, expert, etc.",
 )
 @click.option("--max-tokens", type=int, default=512, help="Max output tokens per request")
-@click.option(
-    "--defeat-cache/--allow-cache",
-    default=True,
-    help="Defeat prefix caching (default: on)",
-)
 @click.option(
     "--cache-mode",
     type=click.Choice(["cold", "warm", "both"]),
@@ -134,7 +131,6 @@ def speed(
     context_tokens,
     tasks,
     max_tokens,
-    defeat_cache,
     cache_mode,
     timeout,
     output,
@@ -172,7 +168,6 @@ def speed(
             "model_context_length": model_context_length,
             "task_range": tasks,
             "max_output_tokens": max_tokens,
-            "defeat_cache": defeat_cache,
             "cache_mode": cache_mode,
             "timeout": timeout,
             "output": output,
@@ -246,14 +241,28 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
 @click.option("--agent-cmd", default="claude", help="Agent CLI command (default: claude)")
 @click.option("--proxy-port", type=int, default=19000, help="Proxy listen port")
 @click.option("--output", "-o", default=None, help="Save results to file")
+@click.option(
+    "--upstream-api",
+    type=click.Choice(["openai", "anthropic"]),
+    default=None,
+    help="Upstream API format. Auto-detected from URL if not set "
+    "(api.anthropic.com → anthropic, everything else → openai).",
+)
 @click.pass_context
-def agent(ctx, endpoint, model, api_key, api_key_header, tasks, agent_cmd, proxy_port, output):
+def agent(
+    ctx, endpoint, model, api_key, api_key_header, tasks,
+    agent_cmd, proxy_port, output, upstream_api,
+):
     """Run full agentic benchmark through the recording proxy.
 
     \b
     Starts a recording proxy that sits between an agent (like Claude Code)
-    and your endpoint. The proxy translates Anthropic API to OpenAI API and
-    records per-request timing metrics.
+    and your endpoint. The proxy records per-request timing metrics.
+
+    \b
+    Supports both OpenAI-compatible and Anthropic upstream endpoints:
+      --upstream-api openai      → translates Anthropic → OpenAI (default)
+      --upstream-api anthropic   → forwards Anthropic requests natively
     """
     from agentic_swarm_bench.runner.claude_code import run_agent_benchmark
 
@@ -267,6 +276,7 @@ def agent(ctx, endpoint, model, api_key, api_key_header, tasks, agent_cmd, proxy
             "task_range": tasks,
             "proxy_port": proxy_port,
             "output": output,
+            "upstream_api": upstream_api,
         },
     )
 
@@ -343,7 +353,7 @@ def list_tasks(tasks, tags, fmt):
 )
 @click.option("--port", "-P", type=int, default=19000, help="Local proxy port (default: 19000)")
 @click.option(
-    "--output", "-o", default="workload.jsonl", help="Output JSONL file (default: workload.jsonl)"
+    "--output", "-o", default="recording.jsonl", help="Output JSONL file (default: recording.jsonl)"
 )
 @click.option(
     "--upstream-api",
@@ -353,11 +363,11 @@ def list_tasks(tasks, tags, fmt):
     "(api.anthropic.com → anthropic, everything else → openai).",
 )
 def record(endpoint, model, api_key, api_key_header, port, output, upstream_api):
-    """Record a real coding session as a replayable workload.
+    """Record a real coding session as a replayable scenario recording.
 
     \b
     Starts a recording proxy that captures every request from your session
-    agent (Claude Code, Cursor, etc.) into a JSONL workload file. Stop
+    agent (Claude Code, Cursor, etc.) into a JSONL recording file. Stop
     with Ctrl+C when done.
 
     \b
@@ -372,7 +382,7 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
         -k $ANTHROPIC_API_KEY --api-key-header x-api-key
       asb record -e http://localhost:8000 -m my-model -o session.jsonl
     """
-    from agentic_swarm_bench.workloads.recorder import run_recorder
+    from agentic_swarm_bench.scenarios.recorder import run_recorder
 
     run_recorder(
         upstream_url=endpoint,
@@ -395,7 +405,10 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     help="Header name for the API key",
 )
 @click.option(
-    "--workload", "-w", required=True, help="Workload file (.jsonl) or built-in name"
+    "--scenario",
+    "-w",
+    required=True,
+    help="Scenario path: directory with scenario.json, single .jsonl, or built-in name",
 )
 @click.option("--output", "-o", default=None, help="Save results to file (.md or .json)")
 @click.option("--timeout", type=float, default=300.0, help="Request timeout in seconds")
@@ -403,12 +416,15 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     "--slice-tokens",
     type=int,
     default=None,
-    help="Replay until cumulative prompt tokens exceed N",
+    help="Replay until cumulative prompt tokens exceed N per task",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without sending requests")
 @click.option(
-    "--users", "-u", type=int, default=1,
-    help="Number of concurrent users replaying the workload (default: 1)",
+    "--users",
+    "-u",
+    type=int,
+    default=1,
+    help="Number of concurrent users per task (default: 1)",
 )
 @click.option(
     "--model-context-length",
@@ -416,41 +432,78 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     default=None,
     help="Model's max context window in tokens. Skips requests whose prompt exceeds it.",
 )
+@click.option(
+    "--repetitions",
+    "-r",
+    type=int,
+    default=1,
+    help="How many times to run each task (default: 1)",
+)
+@click.option(
+    "--max-concurrent",
+    type=int,
+    default=10,
+    help="Maximum tasks executing simultaneously (default: 10)",
+)
+@click.option(
+    "--policy",
+    type=click.Choice(["round_robin", "sequential", "random"]),
+    default="round_robin",
+    help="Task execution order: round_robin, sequential, or random (default: round_robin)",
+)
+@click.option(
+    "--poison/--no-poison",
+    default=False,
+    help="Apply prefix-cache poisoning to simulate realistic KV cache invalidation",
+)
 @click.pass_context
 def replay(
-    ctx, endpoint, model, api_key, api_key_header,
-    workload, output, timeout, slice_tokens, dry_run, users, model_context_length,
+    ctx,
+    endpoint,
+    model,
+    api_key,
+    api_key_header,
+    scenario,
+    output,
+    timeout,
+    slice_tokens,
+    dry_run,
+    users,
+    model_context_length,
+    repetitions,
+    max_concurrent,
+    policy,
+    poison,
 ):
-    """Replay a recorded workload against any endpoint.
+    """Replay a recorded scenario against any endpoint.
 
     \b
-    Takes a JSONL workload (from `asb record` or built-in) and replays
-    each request against the target endpoint, measuring TTFT, tok/s,
-    and throughput.
+    Takes a scenario (directory with scenario.json, single JSONL, or
+    built-in name) and replays each task's requests against the target
+    endpoint, measuring TTFT, tok/s, and throughput.
 
     \b
-    Use --users to simulate N concurrent users each replaying the full
-    session in parallel. Each user's requests stay sequential (preserving
-    natural context growth), but users run concurrently.
+    Use --repetitions to run each task N times. Use --policy to control
+    execution order (round_robin, sequential, or random). Use
+    --max-concurrent to cap how many tasks run at once.
 
     \b
-    Use --slice-tokens to replay only part of a session, stopping
-    when cumulative prompt tokens exceed the budget. Requests run
-    in their original recorded order.
+    Use --poison to simulate realistic KV cache invalidation by
+    randomly doubling spaces after the common prefix.
 
     \b
-    Use --model-context-length to skip individual requests whose prompt
-    exceeds the model's context window (avoids 400 errors from the API).
+    Use --users to simulate N concurrent users per task. Use
+    --slice-tokens to cap cumulative prompt tokens per task.
 
     \b
     Examples:
       asb replay -e http://localhost:8000 -m my-model -w session.jsonl
-      asb replay -e http://localhost:8000 -m my-model -w session.jsonl -u 4
-      asb replay -e http://new-server:8000 -m my-model -w session.jsonl -o report.md
-      asb replay -e URL -m MODEL -w session.jsonl --slice-tokens 1000000
-      asb replay -e URL -m MODEL -w session.jsonl --model-context-length 4096
+      asb replay -e http://localhost:8000 -m my-model -w ./scenarios/my-scenario/
+      asb replay -e URL -m MODEL -w scenario -r 3 --max-concurrent 5 --policy sequential
+      asb replay -e URL -m MODEL -w scenario --poison
     """
-    from agentic_swarm_bench.workloads.player import replay_workload
+    from agentic_swarm_bench.scenarios.player import replay_scenario as _replay_scenario
+    from agentic_swarm_bench.scenarios.schedule import Schedule
 
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
@@ -465,15 +518,26 @@ def replay(
         },
     )
 
-    asyncio.run(replay_workload(
-        cfg, workload,
-        slice_tokens=slice_tokens,
-        num_users=users,
-        model_context_length=model_context_length,
-    ))
+    sched = Schedule(
+        repetitions=repetitions,
+        max_concurrent=max_concurrent,
+        policy=policy,
+    )
+
+    asyncio.run(
+        _replay_scenario(
+            cfg,
+            scenario,
+            slice_tokens=slice_tokens,
+            num_users=users,
+            model_context_length=model_context_length,
+            schedule=sched,
+            poison=poison,
+        )
+    )
 
 
-@main.command("list-workloads")
+@main.command("list-scenarios")
 @click.option(
     "--format",
     "fmt",
@@ -481,44 +545,42 @@ def replay(
     default="table",
     help="Output format",
 )
-def list_workloads(fmt):
-    """Show available built-in workloads.
+def list_scenarios(fmt):
+    """Show available built-in scenarios.
 
     \b
     Examples:
-      asb list-workloads
-      asb list-workloads --format json
+      asb list-scenarios
+      asb list-scenarios --format json
     """
     import json as json_mod
 
     from rich.table import Table
 
-    from agentic_swarm_bench.workloads.registry import list_builtin_workloads
+    from agentic_swarm_bench.scenarios.registry import list_builtin_scenarios
 
-    workloads = list_builtin_workloads()
+    scenarios = list_builtin_scenarios()
 
     if fmt == "json":
-        console.print(json_mod.dumps(workloads, indent=2))
+        console.print(json_mod.dumps(scenarios, indent=2))
         return
 
-    if not workloads:
-        console.print(
-            "No built-in workloads found. Record one with: asb record -e URL -m MODEL"
-        )
+    if not scenarios:
+        console.print("No built-in scenarios found. Record one with: asb record -e URL -m MODEL")
         return
 
-    table = Table(title=f"Built-in Workloads ({len(workloads)})")
+    table = Table(title=f"Built-in Scenarios ({len(scenarios)})")
     table.add_column("Name")
+    table.add_column("Tasks", justify="right")
     table.add_column("Requests", justify="right")
-    table.add_column("Experiments", justify="right")
     table.add_column("Approx Tokens", justify="right")
 
-    for w in workloads:
+    for s in scenarios:
         table.add_row(
-            w.get("name", "?"),
-            str(w.get("requests", "?")),
-            str(w.get("experiments", "?")),
-            f"{w.get('approx_tokens', 0):,}",
+            s.get("name", "?"),
+            str(s.get("tasks", "?")),
+            str(s.get("requests", "?")),
+            f"{s.get('approx_tokens', 0):,}",
         )
 
     console.print(table)

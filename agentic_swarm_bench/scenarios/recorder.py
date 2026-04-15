@@ -1,15 +1,15 @@
-"""Recording proxy that captures real coding sessions as JSONL workloads.
+"""Recording proxy that captures real coding sessions as JSONL recordings.
 
 Sits between an agent (Claude Code, Cursor, etc.) and any LLM
 endpoint. Every request/response pair is saved as a JSONL line, creating
-a replayable workload.
+a replayable scenario recording.
 
 Supports two upstream modes:
   - OpenAI-compatible (default): translates Anthropic → OpenAI if needed
   - Anthropic passthrough: forwards native Anthropic requests as-is,
     converts messages to OpenAI format only for the JSONL recording
 
-The workload file captures the exact messages, model, timing, and token
+The recording file captures the exact messages, model, timing, and token
 counts from a real session -- so anyone can replay it later against a
 different endpoint to compare performance.
 """
@@ -43,6 +43,7 @@ def _detect_upstream_api(upstream_url: str, explicit: str | None) -> str:
         return explicit
 
     from urllib.parse import urlparse
+
     host = urlparse(upstream_url).hostname or ""
     if any(host.endswith(h) for h in _ANTHROPIC_HOSTS):
         return "anthropic"
@@ -54,17 +55,17 @@ def create_recording_app(
     model: str,
     api_key: str = "",
     api_key_header: str = "Authorization",
-    output_file: str = "workload.jsonl",
+    output_file: str = "recording.jsonl",
     upstream_api: str | None = None,
 ) -> "FastAPI":
-    """Create a FastAPI app that records all requests to a JSONL workload file."""
+    """Create a FastAPI app that records all requests to a JSONL recording file."""
     if not HAS_FASTAPI:
         raise ImportError(
             "FastAPI and uvicorn are required for recording. "
             "Install with: pip install agentic-swarm-bench[proxy]"
         )
 
-    app = FastAPI(title="agentic-swarm-bench Workload Recorder")
+    app = FastAPI(title="agentic-swarm-bench Recording Proxy")
     out_path = Path(output_file)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -99,11 +100,12 @@ def create_recording_app(
     def _anthropic_messages_to_openai(body: dict) -> list[dict]:
         """Convert Anthropic message format to OpenAI for the JSONL recording."""
         from agentic_swarm_bench.proxy.translators import anthropic_to_openai
+
         oai_body = anthropic_to_openai(body, model)
         return oai_body.get("messages", [])
 
-    @app.get("/workload/status")
-    async def workload_status():
+    @app.get("/recording/status")
+    async def recording_status():
         return {
             "experiment_id": state["experiment_id"],
             "requests_recorded": state["seq"],
@@ -137,9 +139,7 @@ def create_recording_app(
 
         # Anthropic passthrough: forward native Anthropic requests to Anthropic
         if is_messages_api and is_anthropic_upstream:
-            return await _handle_anthropic_passthrough(
-                request, body_json, is_streaming, path
-            )
+            return await _handle_anthropic_passthrough(request, body_json, is_streaming, path)
 
         # Default: translate Anthropic → OpenAI, forward to OpenAI endpoint
         state["seq"] += 1
@@ -148,6 +148,7 @@ def create_recording_app(
 
         if is_messages_api and body_json:
             from agentic_swarm_bench.proxy.translators import anthropic_to_openai
+
             oai_body = anthropic_to_openai(body_json, model)
             target_url = _resolve_upstream("v1/chat/completions")
         else:
@@ -189,15 +190,14 @@ def create_recording_app(
             usage = resp_json.get("usage", {})
             entry["prompt_tokens"] = usage.get("prompt_tokens", 0)
             entry["completion_tokens"] = usage.get("completion_tokens", 0)
-            content = (
-                resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
-            )
+            content = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
             entry["response_length"] = len(content)
 
         _write_entry(entry)
 
         if is_messages_api and resp_json is not None:
             from agentic_swarm_bench.proxy.translators import openai_to_anthropic_response
+
             anthropic_resp = openai_to_anthropic_response(
                 resp_json, body_json.get("model", "unknown")
             )
@@ -207,13 +207,16 @@ def create_recording_app(
             content=resp.content,
             status_code=resp.status_code,
             headers={
-                k: v for k, v in resp.headers.items()
+                k: v
+                for k, v in resp.headers.items()
                 if k.lower() not in ("content-length", "content-encoding", "transfer-encoding")
             },
         )
 
     _ANTHROPIC_FORWARD_HEADERS = {
-        "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access",
+        "anthropic-version",
+        "anthropic-beta",
+        "anthropic-dangerous-direct-browser-access",
     }
 
     async def _handle_anthropic_passthrough(
@@ -246,9 +249,7 @@ def create_recording_app(
         }
 
         if is_streaming:
-            return await _handle_anthropic_streaming(
-                entry, body_json, target_url, headers, t_start
-            )
+            return await _handle_anthropic_streaming(entry, body_json, target_url, headers, t_start)
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             resp = await client.post(target_url, json=body_json, headers=headers)
@@ -263,9 +264,7 @@ def create_recording_app(
             entry["prompt_tokens"] = usage.get("input_tokens", 0)
             entry["completion_tokens"] = usage.get("output_tokens", 0)
             content_blocks = resp_json.get("content", [])
-            text = "".join(
-                b.get("text", "") for b in content_blocks if b.get("type") == "text"
-            )
+            text = "".join(b.get("text", "") for b in content_blocks if b.get("type") == "text")
             entry["response_length"] = len(text)
 
         _write_entry(entry)
@@ -274,7 +273,8 @@ def create_recording_app(
             content=resp.content,
             status_code=resp.status_code,
             headers={
-                k: v for k, v in resp.headers.items()
+                k: v
+                for k, v in resp.headers.items()
                 if k.lower() not in ("content-length", "content-encoding", "transfer-encoding")
             },
         )
@@ -322,10 +322,7 @@ def create_recording_app(
                                         delta_type == "input_json_delta"
                                         and delta.get("partial_json")
                                     )
-                                    or (
-                                        delta_type == "thinking_delta"
-                                        and delta.get("thinking")
-                                    )
+                                    or (delta_type == "thinking_delta" and delta.get("thinking"))
                                 )
                                 if has_content:
                                     if first_time is None:
@@ -356,17 +353,13 @@ def create_recording_app(
             if first_time and last_time and token_count > 1:
                 decode_time = last_time - first_time
                 entry["decode_time_s"] = round(decode_time, 3)
-                entry["tok_per_sec"] = (
-                    round(token_count / decode_time, 2) if decode_time > 0 else 0
-                )
+                entry["tok_per_sec"] = round(token_count / decode_time, 2) if decode_time > 0 else 0
 
             _write_entry(entry)
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
-    async def _handle_streaming(
-        entry, oai_body, target_url, headers, t_start, is_messages_api
-    ):
+    async def _handle_streaming(entry, oai_body, target_url, headers, t_start, is_messages_api):
         """Handle streaming request via OpenAI upstream, record metrics, forward response."""
 
         async def _stream():
@@ -377,6 +370,7 @@ def create_recording_app(
 
             if is_messages_api:
                 from agentic_swarm_bench.proxy.translators import make_anthropic_stream_events
+
                 msg_id = "msg_" + uuid.uuid4().hex[:24]
                 anth_model = entry.get("model", "unknown")
                 for evt in make_anthropic_stream_events(anth_model, msg_id):
@@ -425,20 +419,14 @@ def create_recording_app(
 
             if is_messages_api:
                 block_stop = {"type": "content_block_stop", "index": 0}
-                yield (
-                    f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n"
-                ).encode()
+                yield (f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n").encode()
                 msg_delta = {
                     "type": "message_delta",
                     "delta": {"stop_reason": "end_turn", "stop_sequence": None},
                     "usage": {"output_tokens": token_count},
                 }
-                yield (
-                    f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n"
-                ).encode()
-                yield (
-                    'event: message_stop\ndata: {"type": "message_stop"}\n\n'
-                ).encode()
+                yield (f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n").encode()
+                yield ('event: message_stop\ndata: {"type": "message_stop"}\n\n').encode()
             else:
                 yield b"data: [DONE]\n\n"
 
@@ -450,9 +438,7 @@ def create_recording_app(
             if first_time and last_time and token_count > 1:
                 decode_time = last_time - first_time
                 entry["decode_time_s"] = round(decode_time, 3)
-                entry["tok_per_sec"] = (
-                    round(token_count / decode_time, 2) if decode_time > 0 else 0
-                )
+                entry["tok_per_sec"] = round(token_count / decode_time, 2) if decode_time > 0 else 0
 
             _write_entry(entry)
 
@@ -479,9 +465,9 @@ def create_recording_app(
             content=resp.content,
             status_code=resp.status_code,
             headers={
-                k: v for k, v in resp.headers.items()
-                if k.lower()
-                not in ("content-length", "content-encoding", "transfer-encoding")
+                k: v
+                for k, v in resp.headers.items()
+                if k.lower() not in ("content-length", "content-encoding", "transfer-encoding")
             },
         )
 
@@ -494,7 +480,7 @@ def run_recorder(
     api_key: str = "",
     api_key_header: str = "Authorization",
     port: int = 19000,
-    output_file: str = "workload.jsonl",
+    output_file: str = "recording.jsonl",
     upstream_api: str | None = None,
 ) -> None:
     """Start the recording proxy server."""
@@ -515,7 +501,7 @@ def run_recorder(
     print(f"  Model: {model}")
     print(f"  Upstream API: {detected_api}")
     print(f"  Output: {output_file}")
-    print(f"  Status: http://localhost:{port}/workload/status")
+    print(f"  Status: http://localhost:{port}/recording/status")
     print()
     print("  Point your agent (Claude Code, Cursor, etc.) at:")
     print(f"    http://localhost:{port}")

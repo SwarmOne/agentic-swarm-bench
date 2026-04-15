@@ -3,14 +3,11 @@
 Produces content that looks like real Claude Code / Cursor / Copilot sessions:
 - System prompt with tool definitions
 - Prior conversation turns with code files, tool calls, and results
-- Unique salt to defeat prefix caching (configurable)
 """
 
 from __future__ import annotations
 
 import random
-import time
-import uuid
 
 SYSTEM_PROMPT = (
     "You are an expert software engineer assistant integrated into a code editor. "
@@ -174,16 +171,9 @@ def build_context_block(target_chars: int) -> str:
     return result
 
 
-def build_cache_defeat_salt() -> str:
-    """Generate a unique salt string to defeat prefix caching."""
-    rand_digits = "".join(str(random.randint(0, 9)) for _ in range(200))
-    return f"[session_id={uuid.uuid4().hex} ts={time.time_ns()} rand={rand_digits}]"
-
-
 def build_messages(
     task_prompt: str,
     target_tokens: int,
-    defeat_cache: bool = True,
     random_seed: float | int | None = None,
 ) -> list[dict]:
     """Build a complete message list for one benchmark request.
@@ -212,12 +202,7 @@ def build_messages(
         else:
             padding = build_context_block(needed_chars)
 
-    salt = ""
-    if defeat_cache:
-        salt = build_cache_defeat_salt() + "\n\n"
-
     user_content = (
-        f"{salt}"
         f"Here is my current project codebase for context:\n\n"
         f"{padding}\n\n"
         f"---\n\n"

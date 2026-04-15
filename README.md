@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>The open-source benchmark for LLM inference under agentic swarm workloads</strong><br>
-  Created by <a href="https://swarmone.ai"><img src="https://raw.githubusercontent.com/SwarmOne/agentic-swarm-bench/main/assets/swarmone-logo.svg" alt="SwarmOne" height="20" style="vertical-align: middle;" /></a> - the AI-native cloud for agentic workloads
+  <strong>The open-source benchmark for LLM inference under agentic scenarios</strong><br>
+  Created by <a href="https://swarmone.ai"><img src="https://raw.githubusercontent.com/SwarmOne/agentic-swarm-bench/main/assets/swarmone-logo.svg" alt="SwarmOne" height="20" style="vertical-align: middle;" /></a> - the AI-native cloud for agentic scenarios
 </p>
 
 <p align="center">
@@ -18,9 +18,10 @@
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#why-agentic-swarm">Why Agentic Swarm</a> &bull;
   <a href="#benchmark-modes">Modes</a> &bull;
-  <a href="#workload-recording--replay">Record & Replay</a> &bull;
+  <a href="#scenario-recording--replay">Record & Replay</a> &bull;
   <a href="#the-110-tasks">Tasks</a> &bull;
   <a href="#context-control">Context Control</a> &bull;
+  <a href="#prefix-cache-poisoning">Cache Poisoning</a> &bull;
   <a href="#reports">Reports</a> &bull;
   <a href="#docker">Docker</a>
 </p>
@@ -39,7 +40,7 @@ When Claude Code opens a file, reads 2,000 lines, edits three functions, runs te
 
 - **SWE-bench** measures model quality on GitHub issues. It doesn't measure inference speed.
 - **LMSys / Chatbot Arena** measures chatbot throughput at ~2K context. Agentic swarm contexts are 20-80x larger.
-- **Generic LLM benchmarks** send uniform requests. Agentic swarm workloads have system prompts with tool schemas, multi-turn history, code files, and growing context windows.
+- **Generic LLM benchmarks** send uniform requests. Agentic swarm scenarios have system prompts with tool schemas, multi-turn history, code files, and growing context windows.
 
 **AgenticSwarmBench fills that gap** - it benchmarks your LLM serving stack under the exact access patterns that Claude Code, Cursor, Windsurf, and Copilot generate.
 
@@ -47,12 +48,12 @@ When Claude Code opens a file, reads 2,000 lines, edits three functions, runs te
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Agentic swarm context**      | Pads requests with real-looking agentic sessions - system prompts with tool definitions, prior conversation turns, code files, tool call results, error traces |
 | **Growing context simulation** | Profiles simulate how context grows during a real coding session: fresh (6K) → short (20K) → medium (40K) → long (70K) → full (100K) → xl (200K) → xxl (400K)  |
-| **Prefix cache defeat**        | Unique per-request salt ensures you measure true cold-start inference, not cache hits                                                                          |
+| **Prefix cache poisoning**     | Space-doubling breaks prefix caching without adding artificial content, ensuring true cold-start measurements                                                  |
 | **Cache impact measurement**   | `--cache-mode both` runs cold + warm to show exact prefix cache speedup (10x cost difference on Anthropic)                                                     |
 | **Reasoning token detection**  | Automatically detects thinking/reasoning tokens (DeepSeek R1, o3, Claude Extended Thinking) and reports thinking overhead vs visible output latency            |
 | **110 agentic swarm tasks**    | 5 difficulty tiers, 5 languages (Python, TypeScript, Rust, Go, SQL) - from single-function fixes to full-stack refactors                                       |
-| **Record & replay**            | Capture real coding sessions as replayable workloads, then benchmark them against any endpoint                                                                 |
-| **Five CLI modes**             | Speed, eval, agent, record, and replay - plus reporting and comparison                                                                                         |
+| **Record & replay**            | Capture real coding sessions as replayable scenarios, then benchmark them against any endpoint                                                                 |
+| **Three benchmark modes**      | Speed (synthetic load), record/replay (your sessions), agent (real multi-turn) - plus reporting and comparison                                                 |
 | **Docker one-liner**           | Point at any vLLM / SGLang / TGI / OpenAI-compatible endpoint and go                                                                                           |
 
 ---
@@ -62,13 +63,10 @@ When Claude Code opens a file, reads 2,000 lines, edits three functions, runs te
 ### Install
 
 ```bash
-pip install agentic-swarm-bench
-```
+uv pip install agentic-swarm-bench             # with uv (recommended)
+pip install agentic-swarm-bench                # or with pip
 
-Or with proxy support (for agentic mode):
-
-```bash
-pip install "agentic-swarm-bench[proxy]"
+uv pip install "agentic-swarm-bench[proxy]"    # add proxy support (for agent / record modes)
 ```
 
 ### Run against your own endpoint
@@ -127,28 +125,55 @@ docker run --rm -v $(pwd)/results:/results \
 ## Benchmark Modes
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                              AgenticSwarmBench                                       │
-├──────────────┬──────────────────┬──────────────────┬─────────────────────────────────┤
-│  speed       │  eval            │  record / replay │  agent                          │
-│              │                  │                  │                                 │
-│  Direct to   │  Send swarm      │  Capture real    │  Recording proxy between        │
-│  endpoint    │  tasks, validate │  agentic sessions│  agent and endpoint             │
-│              │  generated code  │  as JSONL, then  │                                 │
-│  Measures:   │  Measures:       │  replay anywhere │  Measures:                      │
-│  TTFT        │  Syntax pass     │                  │  Real agentic session metrics   │
-│  tok/s       │  Execution pass  │  Measures:       │  Multi-turn latency growth      │
-│  ITL         │  Functional      │  Same as speed,  │  Tool call overhead             │
-│  Prefill     │  correctness     │  from real data  │  Context window scaling         │
-└──────────────┴──────────────────┴──────────────────┴─────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                             AgenticSwarmBench                                 │
+├──────────────────┬──────────────────────┬─────────────────────────────────────┤
+│  asb speed       │  asb record / replay │  asb agent                          │
+│                  │                      │                                     │
+│  Synthetic       │  Capture YOUR real   │  Runs Claude Code (or any agent)    │
+│  agentic context │  coding sessions as  │  end-to-end with benchmark tasks    │
+│  → endpoint      │  JSONL, then replay  │  through a metrics proxy            │
+│                  │  against any endpoint│                                     │
+│  1 request per   │                      │  5-15 real requests per task        │
+│  measurement     │  Real multi-turn     │  with tool use, file I/O,           │
+│                  │  conversations       │  growing context                    │
+│  Measures:       │                      │                                     │
+│  TTFT, tok/s     │  Measures:           │  Measures:                          │
+│  ITL, prefill    │  Same as speed, but  │  Multi-turn latency compounding     │
+│                  │  from real data      │  Context growth over a session      │
+└──────────────────┴──────────────────────┴─────────────────────────────────────┘
 ```
 
 ### `asb speed` - Inference Speed Under Agentic Load
 
-Sends streaming requests with realistic agentic swarm context (system prompts, tool schemas, file contents, conversation history) directly to any OpenAI-compatible endpoint.
+Sends streaming requests directly to any OpenAI-compatible endpoint. Each request is padded with **synthetic agentic context** so the model sees what it would see in a real coding session:
+
+````
+┌─ system ───────────────────────────────────────────────────────────────────┐
+│ "You are an expert software engineer assistant integrated into a code      │
+│  editor. You have access to the user's full project codebase..."           │
+└────────────────────────────────────────────────────────────────────────────┘
+┌─ user ─────────────────────────────────────────────────────────────────────┐
+│ <tool name="Read">...</tool>              ← tool definitions (Read, Write, │
+│ <tool name="Write">...</tool>               Edit, Bash, Grep, etc.)        │
+│                                                                            │
+│ <user_turn> Review src/auth/middleware.py  ← synthetic prior conversation  │
+│   ```python                                 turns with code files, error   │
+│   def handle_request(...)                   traces, and assistant replies  │
+│   ```                                       (repeated to fill target       │
+│ </user_turn>                                 context size)                 │
+│ <assistant_turn> I can see the issue...                                    │
+│ </assistant_turn>                                                          │
+│                                                                            │
+│ ---                                                                        │
+│ Based on the codebase above, <task prompt from tasks.json>                 │
+└────────────────────────────────────────────────────────────────────────────┘
+````
+
+The task prompt (e.g. "Write a Python function that takes a list of integers and returns the largest one") comes from the [110 built-in tasks](#the-110-tasks). The padding around it is what makes this an **agentic** benchmark - it simulates the accumulated context of a real coding session.
 
 ```bash
-# Default: realistic context sweep simulating a coding session growing over time
+# Default: sweeps context sizes from fresh (6K) → full (100K)
 asb speed -e http://localhost:8000 -m my-model
 
 # Specific concurrency (32 concurrent agents) at long context
@@ -162,64 +187,20 @@ asb speed -e http://localhost:8000 -m my-model --suite full --max-users 16
 
 # Measure prefix cache impact - runs cold then warm
 asb speed -e http://localhost:8000 -m my-model --cache-mode both
-```
 
-```bash
 # JSON-only output (for CI/CD pipelines)
 asb speed -e http://localhost:8000 -m my-model --format json -o results.json
-
-# Randomize context per request (tests diverse prefill patterns)
-asb speed -e http://localhost:8000 -m my-model --random-context
 ```
 
 **Metrics:** TTFT, decode tok/s per user, prefill tok/s, ITL (p50/p95/p99), aggregate throughput, reasoning token overhead. When the endpoint returns `prompt_tokens` in the response, actual token counts are shown alongside estimates.
 
-### `asb eval` - Code Correctness
-
-Sends agentic swarm tasks and validates the generated code at three levels:
-
-```bash
-# Syntax validation (does it parse?)
-asb eval -e http://localhost:8000 -m my-model -t p1-p25 -v syntax
-
-# Execution validation (does it run?)
-asb eval -e http://localhost:8000 -m my-model -t p1-p25 -v execution
-
-# Functional validation (does it produce correct output?)
-asb eval -e http://localhost:8000 -m my-model -t p1-p25 -v functional
-```
-
-### `asb agent` - Full Agentic Session Benchmark
-
-Runs a recording proxy between a real agent (Claude Code) and your endpoint, measuring actual multi-turn agentic sessions:
-
-```bash
-asb agent \
-  -e http://localhost:8000 \
-  -m my-model \
-  -t p1-p10
-```
-
-The proxy translates Anthropic Messages API → OpenAI Chat Completions API and records per-request timing, context growth, and tool call patterns.
-
-### `asb list-tasks` - Browse Available Tasks
-
-```bash
-asb list-tasks                        # Show all 110 tasks
-asb list-tasks -t trivial             # Filter by tier
-asb list-tasks --tags typescript,rust  # Filter by language
-asb list-tasks --format json          # JSON output
-```
-
----
-
-## Workload Recording & Replay
+### Scenario Recording & Replay
 
 Synthetic benchmarks are useful, but nothing beats measuring with **your actual coding sessions**. Record a real session, then replay it against any endpoint.
 
-### `asb record` - Capture a Real Session
+#### `asb record` - Capture a Real Session
 
-Starts a recording proxy between your agent and your LLM endpoint. Every request/response pair is saved as a JSONL line:
+Starts a recording proxy between your agent and your LLM endpoint. Every request/response pair is saved as a JSONL recording:
 
 ```bash
 # Record with an OpenAI-compatible upstream
@@ -254,11 +235,11 @@ The recorder supports **two upstream modes**:
 - **OpenAI-compatible** (default): translates Anthropic Messages API → OpenAI format before forwarding
 - **Anthropic passthrough**: forwards requests natively to Anthropic's API - no translation, full fidelity. Auto-detected when the endpoint is `api.anthropic.com`, or set explicitly with `--upstream-api anthropic`.
 
-Both modes save the workload in OpenAI format for replay. Stop with `Ctrl+C` when done.
+Both modes save the recording in OpenAI format for replay. Stop with `Ctrl+C` when done.
 
-### `asb replay` - Replay Against Any Endpoint
+#### `asb replay` - Replay Against Any Endpoint
 
-Take a recorded workload and replay it against a different endpoint, hardware, or configuration:
+Take a recorded scenario and replay it against a different endpoint, hardware, or configuration:
 
 ```bash
 # Replay a session against a new endpoint
@@ -267,12 +248,15 @@ asb replay \
   -m my-model \
   -w my-session.jsonl
 
-# Generate a full report
+# Replay a scenario directory with schedule
 asb replay \
   -e http://new-server:8000 \
   -m my-model \
-  -w my-session.jsonl \
-  -o report.md
+  -w ./scenarios/my-scenario/ \
+  --repetitions 3 --max-concurrent 5 --policy sequential
+
+# Replay with prefix-cache poisoning (simulates realistic cache invalidation)
+asb replay -e URL -m MODEL -w scenario --poison
 
 # Preview without sending requests
 asb replay -e URL -m MODEL -w session.jsonl --dry-run
@@ -281,15 +265,85 @@ asb replay -e URL -m MODEL -w session.jsonl --dry-run
 asb replay -e URL -m MODEL -w session.jsonl --slice-tokens 1000000
 ```
 
-**Slicing workloads:** Real sessions grow from small contexts to large ones. `--slice-tokens N` replays requests from the start until cumulative prompt tokens reach N - preserving the natural context growth while capping how much you send through the endpoint. Useful for targeting specific model context limits or keeping replay costs down.
+**Scheduling:** Control how tasks execute with `--repetitions`, `--max-concurrent`, and `--policy` (round_robin, sequential, random).
+
+**Prefix-cache poisoning:** Use `--poison` to break prefix cache between repetitions. See [Prefix Cache Poisoning](#prefix-cache-poisoning) for how this works.
+
+**Slicing scenarios:** Real sessions grow from small contexts to large ones. `--slice-tokens N` replays requests from the start until cumulative prompt tokens reach N.
 
 Requests are grouped by context size and produce the same metrics as `asb speed` - TTFT, tok/s, ITL, and aggregate throughput.
 
-### `asb list-workloads` - Browse Built-in Workloads
+#### `asb list-scenarios` - Browse Built-in Scenarios
 
 ```bash
-asb list-workloads
-asb list-workloads --format json
+asb list-scenarios
+asb list-scenarios --format json
+```
+
+### `asb agent` - End-to-End Agent Benchmark
+
+`asb speed` sends one synthetic request per measurement. `asb agent` runs a **real agent process** - Claude Code by default - and measures what actually happens during a multi-turn coding session.
+
+Here's what a single task run looks like:
+
+```
+You run:    asb agent -e http://localhost:8000 -m my-model -t p1-p10
+
+What happens for each task:
+
+  ┌─────────────┐         ┌─────────────────┐         ┌──────────────┐
+  │ Claude Code │ ──────► │  ASB proxy      │ ──────► │ Your endpoint│
+  │ (real agent)│ ◄────── │  (translates    │ ◄────── │ (vLLM, etc.) │
+  │             │         │   Anthropic →   │         │              │
+  │ reads files │         │   OpenAI, logs  │         │              │
+  │ writes code │         │   per-request   │         │              │
+  │ runs tests  │         │   timing)       │         │              │
+  │ iterates    │         │                 │         │              │
+  └─────────────┘         └─────────────────┘         └──────────────┘
+
+  Turn 1:  Claude reads the task           →  6K context   →  TTFT 200ms
+  Turn 2:  Claude reads 3 files            →  25K context  →  TTFT 800ms
+  Turn 3:  Claude writes code              →  35K context  →  TTFT 1.2s
+  Turn 4:  Claude runs tests, gets errors  →  50K context  →  TTFT 2.1s
+  Turn 5:  Claude fixes the code           →  60K context  →  TTFT 3.5s
+  Turn 6:  Claude runs tests again         →  70K context  →  TTFT 4.8s
+  ...
+```
+
+This is what `speed` can't measure: **latency compounding over a real session**. Each turn's context naturally grows because it includes prior turns, file contents, tool outputs, and error traces. The proxy records TTFT, tok/s, and context size for every request.
+
+```bash
+asb agent -e http://localhost:8000 -m my-model -t p1-p10
+
+# Use a different agent (any CLI that accepts a prompt)
+asb agent -e http://localhost:8000 -m my-model -t p1-p10 --agent-cmd my-agent
+```
+
+**Speed vs Record/Replay vs Agent:**
+
+|                                 | `speed`                              | `record` / `replay`                      | `agent`                                        |
+| ------------------------------- | ------------------------------------ | ---------------------------------------- | ---------------------------------------------- |
+| **What talks to your endpoint** | ASB directly (one synthetic request) | You during `record`, ASB during `replay` | A real agent (Claude Code) through a proxy     |
+| **Number of requests per task** | 1                                    | Whatever the real session had            | 5-15+ (real tool-use turns)                    |
+| **Context**                     | Synthetic padding to target size     | Your actual session context              | Grows naturally as the agent works             |
+| **Use case**                    | Raw throughput at controlled sizes   | Benchmark with your real traffic         | "What does it feel like to use this endpoint?" |
+
+### `asb eval` - Code Correctness (experimental)
+
+Optional mode that sends the same tasks with agentic context, but validates the generated code instead of measuring speed. Useful for checking if your model still produces correct code under large-context pressure.
+
+```bash
+asb eval -e http://localhost:8000 -m my-model -t p1-p25 -v syntax      # does it parse?
+asb eval -e http://localhost:8000 -m my-model -t p1-p25 -v execution   # does it run?
+```
+
+### `asb list-tasks` - Browse Available Tasks
+
+```bash
+asb list-tasks                        # Show all 110 tasks
+asb list-tasks -t trivial             # Filter by tier
+asb list-tasks --tags typescript,rust  # Filter by language
+asb list-tasks --format json          # JSON output
 ```
 
 ---
@@ -366,25 +420,31 @@ This is useful when running suites or `realistic` sweeps against models with dif
 
 ---
 
-## Prefix Cache Defeat
+## Prefix Cache Poisoning
 
-Every request includes a unique salt:
+LLM inference engines cache the KV state of common prefixes so repeated requests skip prefill. This makes benchmarks look artificially fast - you're measuring cache hits, not real inference.
 
-```
-[session_id=abc123... ts=1234567890 rand=847291...]
-```
+AgenticSwarmBench defeats the prefix cache using **space doubling**: it finds isolated single spaces in the request context and randomly doubles some of them. This shifts BPE token boundaries (`" word"` → `"  word"` splits differently) and invalidates the KV cache from that point forward — without adding any artificial content the model can see.
 
-This ensures prefix caching cannot mask cold-start prefill costs. Every measurement reflects true inference performance.
+This mimics what actually happens in real coding sessions: when an agent edits a file mid-conversation, the context changes from the edit point onward, breaking the cache naturally.
+
+- **`asb speed`**: Each request gets a unique space-doubling pattern seeded by task ID, user ID, and timestamp
+- **`asb replay --poison`**: Finds the shared prefix across all tasks (typically the system prompt), then applies space-doubling only after that prefix. Different repetitions get different patterns.
+
+### Controlling cache behavior
 
 ```bash
-# Default: cache defeat enabled (cold-start measurement)
-asb speed -e URL -m MODEL --defeat-cache
+# Default: cold cache (space-doubling enabled)
+asb speed -e URL -m MODEL
 
 # Measure production-like performance with caching
-asb speed -e URL -m MODEL --allow-cache
+asb speed -e URL -m MODEL --cache-mode warm
 
 # Measure BOTH - shows exact cache speedup
 asb speed -e URL -m MODEL --cache-mode both
+
+# Replay with poisoning
+asb replay -e URL -m MODEL -w scenario --poison
 ```
 
 `--cache-mode both` runs each scenario twice (first cold, then warm) and reports the delta. Anthropic charges 10x less for cached tokens ($0.30 vs $3.00/M), so knowing your cache hit rate matters.
@@ -400,7 +460,7 @@ Models like DeepSeek R1, o3, and Claude Extended Thinking produce **thinking tok
 | **Thinking overhead** | Extra latency from reasoning before visible output |
 | **Thinking tokens**   | Count of reasoning tokens generated                |
 
-This is critical for agentic swarm workloads - a reasoning model that takes 5 seconds to "think" before emitting code changes the UX of the entire editing session.
+This is critical for agentic swarm scenarios - a reasoning model that takes 5 seconds to "think" before emitting code changes the UX of the entire editing session.
 
 ---
 
@@ -411,13 +471,13 @@ Reference ranges from common setups (your numbers will vary by hardware, model s
 | Setup                                   | Context | Users |   TTFT | Tok/s/user | Notes                               |
 | --------------------------------------- | ------- | ----: | -----: | ---------: | ----------------------------------- |
 | vLLM on 1x A100 (80GB), 7B model        | 6K      |     1 | ~100ms |    ~80-120 | Baseline: fast model, short context |
-| vLLM on 1x A100 (80GB), 7B model        | 40K     |     8 |  ~2-4s |     ~20-40 | Typical agentic workload            |
+| vLLM on 1x A100 (80GB), 7B model        | 40K     |     8 |  ~2-4s |     ~20-40 | Typical agentic scenario            |
 | vLLM on 1x A100 (80GB), 7B model        | 100K    |    32 | ~8-15s |      ~5-15 | Stress test                         |
 | SGLang on 1x H100, 70B model            | 6K      |     1 | ~200ms |     ~40-60 | Larger model, faster GPU            |
 | SGLang on 1x H100, 70B model            | 40K     |     8 |  ~3-6s |     ~10-25 | Agentic sweet spot                  |
 | API provider (e.g. Together, Fireworks) | 40K     |     8 |  ~2-8s |     ~15-40 | Varies by provider/load             |
 
-**Rules of thumb for agentic swarm workloads:**
+**Rules of thumb for agentic swarm scenarios:**
 
 - **TTFT < 3s** at 40K context → responsive editing experience
 - **Tok/s > 30/user** → code appears to stream smoothly
@@ -430,11 +490,11 @@ Reference ranges from common setups (your numbers will vary by hardware, model s
 
 ## Reports
 
-Reports are designed to answer one question fast: **is this endpoint good enough for agentic swarm workloads?**
+Reports are designed to answer one question fast: **is this endpoint good enough for agentic swarm scenarios?**
 
 Every report includes:
 
-1. **Verdict** - 🟢 GOOD / 🟡 MARGINAL / 🔴 POOR for agentic swarm workloads, with the key numbers
+1. **Verdict** - 🟢 GOOD / 🟡 MARGINAL / 🔴 POOR for agentic swarm scenarios, with the key numbers
 2. **Key Findings** - auto-generated insights: TTFT scaling ratio, throughput range, concurrency efficiency, thinking overhead
 3. **Summary table** - TTFT, tok/s, ITL at each concurrency level and context size, with color-coded grade icons per row
 4. **What This Means for Agentic Swarm** - maps raw metrics to user experience ("instant response", "smooth streaming", "sluggish, frustrating")
@@ -447,7 +507,7 @@ Every report includes:
 The CLI also prints a final verdict line after every benchmark:
 
 ```
-  Verdict: GOOD for agentic swarm workloads at medium context
+  Verdict: GOOD for agentic swarm scenarios at medium context
 ```
 
 Compare two runs (includes head-to-head table, ASCII bar chart, and winner summary):
@@ -507,7 +567,6 @@ AgenticSwarmBench merges configuration from four sources (highest priority first
 endpoint: http://my-gpu-server:8000
 model: my-model
 suite: standard
-defeat_cache: true
 ```
 
 ### Environment Variables
@@ -520,7 +579,6 @@ defeat_cache: true
 | `ASB_CONTEXT_TOKENS`       | Default context size in tokens                      |
 | `ASB_CONTEXT_PROFILE`      | Default context profile                             |
 | `ASB_MODEL_CONTEXT_LENGTH` | Model's max context window - skips larger scenarios |
-| `ASB_DEFEAT_CACHE`         | Defeat prefix caching (`true`/`false`)              |
 
 ---
 
@@ -536,18 +594,20 @@ agentic-swarm-bench/
       tasks.json        ← 110 agentic swarm tasks, P1-P110
       registry.py       ← Load/filter tasks by tier, range, tags, language
       context/
-        codebase_context.py ← Agentic session context: tool schemas, file contents, cache defeat salt
+        codebase_context.py ← Agentic session context: tool schemas, file contents, conversation turns
 
     runner/
       direct.py         ← Speed mode: direct endpoint benchmark with agentic context
       eval_runner.py    ← Eval mode: code correctness validation
       claude_code.py    ← Agent mode: Claude Code orchestration through recording proxy
 
-    workloads/
-      recorder.py       ← Recording proxy: captures real sessions as JSONL workloads
-      player.py         ← Replay engine: replays workloads against any endpoint
-      registry.py       ← Load/list/resolve workloads (file path or built-in name)
-      data/             ← Built-in workload files
+    scenarios/
+      recorder.py       ← Recording proxy: captures real sessions as JSONL recordings
+      player.py         ← Replay engine: replays scenarios against any endpoint
+      registry.py       ← Load/list/resolve scenarios (file path or built-in name)
+      schedule.py       ← Execution schedule: repetitions, concurrency, ordering policy
+      poison.py         ← Prefix-cache poisoning: breaks KV cache between repetitions
+      data/             ← Built-in scenario directories
 
     proxy/
       server.py         ← Agent-mode proxy (FastAPI) - Anthropic ↔ OpenAI translation
@@ -579,7 +639,7 @@ The repo includes a Claude Code skill (`skill/SKILL.md`) that turns Claude Code 
 
 ```bash
 # Add the skill to Claude Code, then ask:
-# "Optimize my vLLM deployment at http://localhost:8000 for agentic workload"
+# "Optimize my vLLM deployment at http://localhost:8000 for agentic scenarios"
 ```
 
 See `skill/SKILL.md` for the full skill definition and available knobs.
@@ -593,6 +653,12 @@ We welcome contributions! Here's how to get started:
 ```bash
 git clone https://github.com/swarmone/agentic-swarm-bench.git
 cd agentic-swarm-bench
+
+# With uv (recommended)
+uv sync --all-extras
+uv run pytest tests/ -v
+
+# Or with pip
 pip install -e ".[dev,proxy]"
 make test
 ```

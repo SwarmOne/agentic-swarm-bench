@@ -1,13 +1,15 @@
-"""Replay recorded workloads against any OpenAI-compatible endpoint.
+"""Replay recorded scenarios against any OpenAI-compatible endpoint.
 
-Takes a JSONL workload (from `asb record` or built-in) and replays each
-request against a target endpoint, collecting the same metrics as
-`asb speed`. This lets you compare how a real agentic session performs
-across different endpoints, hardware, or configurations.
+Takes a scenario (directory with manifest or single JSONL) and replays
+each task's requests against a target endpoint, collecting the same
+metrics as ``asb speed``.
 
-With ``--users N``, N copies of the workload run concurrently - each
-user replays the full session sequentially, but the N sessions overlap,
-stressing the endpoint under realistic multi-tenant load.
+With a Schedule, tasks from the scenario are ordered (round_robin,
+sequential, or random), repeated N times, and executed with capped
+concurrency via an asyncio semaphore.
+
+With ``--poison``, spaces after the common prefix are randomly doubled
+to simulate realistic KV cache invalidation.
 """
 
 from __future__ import annotations
@@ -30,7 +32,14 @@ from agentic_swarm_bench.metrics.collector import (
     is_context_length_error,
 )
 from agentic_swarm_bench.metrics.stats import analyze_scenario
-from agentic_swarm_bench.workloads.registry import Workload, get_workload
+from agentic_swarm_bench.scenarios.poison import compute_scenario_lcp, poison_task_execution
+from agentic_swarm_bench.scenarios.registry import (
+    RecordingEntry,
+    Scenario,
+    Task,
+    get_scenario,
+)
+from agentic_swarm_bench.scenarios.schedule import Schedule, build_execution_queue
 
 console = Console()
 
@@ -47,7 +56,6 @@ def _build_headers(config: BenchmarkConfig) -> dict:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 chars per token for English text."""
     return max(1, len(text) // 4) if text else 0
 
 
@@ -64,11 +72,7 @@ async def _replay_one_request(
     on_complete=None,
     max_retries: int = 0,
 ) -> RequestMetrics:
-    """Replay a single recorded request and collect timing metrics.
-
-    Retries automatically on HTTP 429 (rate limit) with exponential backoff.
-    Counts tokens from content length, not SSE chunk count.
-    """
+    """Replay a single recorded request and collect timing metrics."""
     metrics = RequestMetrics(
         request_id=seq,
         user_id=user_id,
@@ -219,7 +223,6 @@ async def _replay_one_request(
 
 
 def _bucket_label(tokens: int) -> str:
-    """Map approximate token count to a context profile label."""
     if tokens < 10_000:
         return "fresh"
     if tokens < 30_000:
@@ -236,22 +239,20 @@ def _bucket_label(tokens: int) -> str:
 
 
 def _slice_entries(
-    entries: list,
+    entries: list[RecordingEntry],
     slice_tokens: int | None,
-) -> list:
-    """Take entries in order until cumulative prompt tokens exceed the budget.
-
-    Uses the recorded ``prompt_tokens`` field when available, falling back to
-    a char/4 estimate.  Returns a (possibly shorter) list preserving order.
-    """
+) -> list[RecordingEntry]:
+    """Take entries in order until cumulative prompt tokens exceed the budget."""
     if slice_tokens is None:
         return entries
 
-    kept: list = []
+    kept: list[RecordingEntry] = []
     cumulative = 0
     for entry in entries:
-        tok = entry.prompt_tokens if getattr(entry, "prompt_tokens", None) else (
-            sum(len(m.get("content", "")) for m in entry.messages) // 4
+        tok = (
+            entry.prompt_tokens
+            if entry.prompt_tokens
+            else (sum(len(m.get("content", "")) for m in entry.messages) // 4)
         )
         if cumulative + tok > slice_tokens and kept:
             break
@@ -261,11 +262,6 @@ def _slice_entries(
 
 
 def _compute_bucket_wall_time(requests: list[RequestMetrics], num_users: int) -> float:
-    """Compute wall time for a bucket of requests.
-
-    Requests are sequential per user but parallel across users, so bucket
-    wall time = max across users of (sum of total_time_s per user).
-    """
     by_user: dict[int, float] = {}
     for r in requests:
         by_user[r.user_id] = by_user.get(r.user_id, 0.0) + r.total_time_s
@@ -274,19 +270,19 @@ def _compute_bucket_wall_time(requests: list[RequestMetrics], num_users: int) ->
     return max(by_user.values())
 
 
-async def _replay_user_session(
+async def _replay_task_entries(
     client: httpx.AsyncClient,
     url: str,
     model_override: str,
     headers: dict,
-    entries: list,
+    entries: list[RecordingEntry],
     timeout: float,
     user_id: int,
     on_complete=None,
     model_context_length: int | None = None,
 ) -> list[RequestMetrics]:
-    """Replay one full user session sequentially, returning all metrics."""
-    results = []
+    """Replay one task's entries sequentially, returning all metrics."""
+    results: list[RequestMetrics] = []
     for entry in entries:
         tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
 
@@ -314,230 +310,176 @@ async def _replay_user_session(
     return results
 
 
-async def replay_workload(
+async def replay_scenario(
     config: BenchmarkConfig,
-    workload_path: str,
+    scenario_path: str,
     *,
     slice_tokens: int | None = None,
     num_users: int = 1,
     model_context_length: int | None = None,
+    schedule: Schedule | None = None,
+    poison: bool = False,
 ) -> BenchmarkRun:
-    """Replay a recorded workload against the configured endpoint."""
-    workload = get_workload(workload_path)
-    original_count = workload.total_requests
+    """Replay a recorded scenario against the configured endpoint."""
+    scenario = get_scenario(scenario_path)
 
-    if slice_tokens is not None:
-        workload.entries = _slice_entries(workload.entries, slice_tokens)
+    if schedule is None:
+        schedule = Schedule()
+
+    lcp_len = compute_scenario_lcp(scenario.tasks) if poison else 0
 
     url = resolve_endpoint(config.endpoint)
     headers = _build_headers(config)
 
+    raw_queue = build_execution_queue(scenario.tasks, schedule)
+
+    if poison:
+        execution_queue = [
+            (poison_task_execution(task, lcp_len, exec_idx), exec_idx)
+            for task, exec_idx in raw_queue
+        ]
+    else:
+        execution_queue = raw_queue
+
+    total_task_executions = len(execution_queue)
+    total_entries = sum(t.total_requests for t, _exec_idx in execution_queue)
+
     console.print("\n[bold]AgenticSwarmBench -- replay[/bold]")
     console.print(f"  Endpoint: {config.endpoint}")
     console.print(f"  Model: {config.model}")
-    console.print(f"  Workload: {workload.name} ({workload.total_requests} requests)")
-    if num_users > 1:
-        total = workload.total_requests * num_users
-        console.print(f"  Users: {num_users} concurrent ({total} total requests)")
-    if slice_tokens is not None:
+    console.print(
+        f"  Scenario: {scenario.name}"
+        f" ({len(scenario.tasks)} task(s), {scenario.total_requests} requests)"
+    )
+    if total_task_executions != len(scenario.tasks):
         console.print(
-            f"  Sliced: {workload.total_requests}/{original_count}"
-            f" requests (≤{slice_tokens:,} prompt tokens)"
+            f"  Schedule: {schedule.policy}"
+            f" × {schedule.repetitions} reps"
+            f" (max {schedule.max_concurrent} concurrent)"
         )
+        console.print(f"  Total executions: {total_task_executions} tasks")
+    if num_users > 1:
+        console.print(f"  Users: {num_users} concurrent per task")
+    if poison:
+        console.print("  Poisoning: [yellow]ON[/yellow] (prefix-cache invalidation, pre-applied)")
+    if slice_tokens is not None:
+        console.print(f"  Slice: ≤{slice_tokens:,} prompt tokens per task")
     if model_context_length is not None:
         console.print(f"  Model context length: {model_context_length:,} tokens")
-    console.print(f"  Approx tokens: {workload.total_tokens_approx:,} per user")
+    console.print(f"  Approx tokens: {scenario.total_tokens_approx:,} per scenario")
     console.rule()
 
     if config.dry_run:
-        _print_replay_dry_run(workload, url, num_users)
+        _print_replay_dry_run(scenario, url, schedule, num_users)
         return BenchmarkRun(model=config.model, endpoint=config.endpoint)
 
     run = BenchmarkRun(
         model=config.model,
         endpoint=config.endpoint,
-        defeat_cache=False,
         started_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    if num_users <= 1:
-        await _replay_single_user(
-            config, workload, url, headers, run,
-            model_context_length=model_context_length,
+    semaphore = asyncio.Semaphore(schedule.max_concurrent)
+
+    async def _run_one_task(task: Task, task_idx: int) -> list[RequestMetrics]:
+        async with semaphore:
+            entries = task.entries
+            if slice_tokens is not None:
+                entries = _slice_entries(entries, slice_tokens)
+
+            async with httpx.AsyncClient() as client:
+                if num_users <= 1:
+                    return await _replay_task_entries(
+                        client=client,
+                        url=url,
+                        model_override=config.model,
+                        headers=headers,
+                        entries=entries,
+                        timeout=config.timeout,
+                        user_id=task_idx,
+                        on_complete=lambda: progress.advance(progress_task_id),
+                        model_context_length=model_context_length,
+                    )
+                else:
+                    coros = [
+                        _replay_task_entries(
+                            client=client,
+                            url=url,
+                            model_override=config.model,
+                            headers=headers,
+                            entries=entries,
+                            timeout=config.timeout,
+                            user_id=task_idx * num_users + uid,
+                            on_complete=lambda: progress.advance(progress_task_id),
+                            model_context_length=model_context_length,
+                        )
+                        for uid in range(num_users)
+                    ]
+                    user_results = await asyncio.gather(*coros)
+                    flat: list[RequestMetrics] = []
+                    for r in user_results:
+                        flat.extend(r)
+                    return flat
+
+    total_progress = total_entries * max(num_users, 1)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress_task_id = progress.add_task(
+            f"Replaying ({total_task_executions} tasks, {total_progress} reqs)",
+            total=total_progress,
         )
-    else:
-        await _replay_multi_user(
-            config, workload, url, headers, run, num_users,
-            model_context_length=model_context_length,
+
+        coros = [_run_one_task(task, idx) for idx, (task, _exec_idx) in enumerate(execution_queue)]
+        all_results = await asyncio.gather(*coros)
+
+        progress.remove_task(progress_task_id)
+
+    flat_results: list[RequestMetrics] = []
+    for task_results in all_results:
+        flat_results.extend(task_results)
+
+    buckets: dict[str, list[RequestMetrics]] = {}
+    for m in flat_results:
+        label = m.context_profile or "unknown"
+        if label not in buckets:
+            buckets[label] = []
+        buckets[label].append(m)
+
+    effective_users = max(num_users, 1)
+    for bucket_label, results in buckets.items():
+        max_ctx = max((m.context_tokens for m in results), default=0)
+        scenario_result = ScenarioResult(
+            num_users=effective_users,
+            context_profile=bucket_label,
+            context_tokens=max_ctx,
+            wall_time_s=_compute_bucket_wall_time(results, effective_users),
+            requests=results,
+        )
+        run.scenarios.append(scenario_result)
+
+        stats = analyze_scenario(scenario_result)
+        _print_bucket_stats(
+            bucket_label,
+            stats,
+            num_users=effective_users,
+            scenario=scenario_result,
         )
 
     console.rule()
-    _print_replay_summary(run, workload, num_users)
+    _print_replay_summary(run, scenario, num_users)
 
     if config.output:
         _save_replay_output(config, run)
 
     return run
-
-
-async def _replay_single_user(
-    config: BenchmarkConfig,
-    workload: Workload,
-    url: str,
-    headers: dict,
-    run: BenchmarkRun,
-    *,
-    model_context_length: int | None = None,
-) -> None:
-    """Sequential replay: one user, in original workload order."""
-    total = len(workload.entries)
-    skipped = 0
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task(f"Replaying ({total} reqs)", total=total)
-        all_results: list[tuple[RequestMetrics, str, int]] = []
-
-        async with httpx.AsyncClient() as client:
-            for entry in workload.entries:
-                tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
-                label = _bucket_label(tokens)
-
-                if model_context_length is not None and tokens > model_context_length:
-                    skipped += 1
-                    progress.advance(task_id)
-                    continue
-
-                model = config.model or entry.model
-                m = await _replay_one_request(
-                    client=client,
-                    url=url,
-                    model=model,
-                    headers=headers,
-                    messages=entry.messages,
-                    max_tokens=entry.max_tokens,
-                    seq=entry.seq,
-                    timeout=config.timeout,
-                    on_complete=lambda: progress.advance(task_id),
-                )
-                m.context_profile = label
-                m.context_tokens = tokens
-                all_results.append((m, label, tokens))
-
-        progress.remove_task(task_id)
-
-    if skipped:
-        console.print(
-            f"\n  [dim]Skipped {skipped} request(s) exceeding"
-            f" model context length ({model_context_length:,} tokens)[/dim]"
-        )
-
-    buckets: dict[str, list[tuple[RequestMetrics, int]]] = {}
-    for m, label, tokens in all_results:
-        if label not in buckets:
-            buckets[label] = []
-        buckets[label].append((m, tokens))
-
-    for bucket_label, entries in buckets.items():
-        results = [m for m, _ in entries]
-        scenario = ScenarioResult(
-            num_users=1,
-            context_profile=bucket_label,
-            context_tokens=max((t for _, t in entries), default=0),
-            wall_time_s=_compute_bucket_wall_time(results, num_users=1),
-            requests=results,
-        )
-        run.scenarios.append(scenario)
-
-        stats = analyze_scenario(scenario)
-        _print_bucket_stats(bucket_label, stats, num_users=1, scenario=scenario)
-
-
-async def _replay_multi_user(
-    config: BenchmarkConfig,
-    workload: Workload,
-    url: str,
-    headers: dict,
-    run: BenchmarkRun,
-    num_users: int,
-    *,
-    model_context_length: int | None = None,
-) -> None:
-    """Concurrent replay: N users each replay the full session in parallel."""
-    total_requests = workload.total_requests * num_users
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task(
-            f"Replaying {num_users} users × {workload.total_requests} reqs",
-            total=total_requests,
-        )
-
-        async with httpx.AsyncClient() as client:
-            coros = [
-                _replay_user_session(
-                    client=client,
-                    url=url,
-                    model_override=config.model,
-                    headers=headers,
-                    entries=workload.entries,
-                    timeout=config.timeout,
-                    user_id=uid,
-                    on_complete=lambda: progress.advance(task_id),
-                    model_context_length=model_context_length,
-                )
-                for uid in range(num_users)
-            ]
-            all_results = await asyncio.gather(*coros)
-
-        progress.remove_task(task_id)
-
-    flat_results: list[RequestMetrics] = []
-    for user_results in all_results:
-        flat_results.extend(user_results)
-
-    if model_context_length is not None:
-        total_entries = len(workload.entries) * num_users
-        skipped = total_entries - len(flat_results)
-        if skipped > 0:
-            console.print(
-                f"\n  [dim]Skipped {skipped} request(s) exceeding"
-                f" model context length ({model_context_length:,} tokens)[/dim]"
-            )
-
-    buckets: dict[str, list[RequestMetrics]] = {}
-    for m in flat_results:
-        if m.context_profile not in buckets:
-            buckets[m.context_profile] = []
-        buckets[m.context_profile].append(m)
-
-    for bucket_label, results in buckets.items():
-        max_ctx = max(m.context_tokens for m in results)
-        scenario = ScenarioResult(
-            num_users=num_users,
-            context_profile=bucket_label,
-            context_tokens=max_ctx,
-            wall_time_s=_compute_bucket_wall_time(results, num_users),
-            requests=results,
-        )
-        run.scenarios.append(scenario)
-
-        stats = analyze_scenario(scenario)
-        _print_bucket_stats(bucket_label, stats, num_users=num_users, scenario=scenario)
 
 
 def _print_bucket_stats(
@@ -550,9 +492,7 @@ def _print_bucket_stats(
     if stats.successful == 0:
         console.print(f"\n  [red]{label}: all {stats.total_requests} requests failed[/red]")
         if scenario and any(is_context_length_error(r.error) for r in scenario.failures):
-            console.print(
-                "         [yellow]↳ prompt exceeded model's context window[/yellow]"
-            )
+            console.print("         [yellow]↳ prompt exceeded model's context window[/yellow]")
         return
 
     user_info = f" ({num_users}u)" if num_users > 1 else ""
@@ -564,7 +504,7 @@ def _print_bucket_stats(
     )
 
 
-def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int = 1) -> None:
+def _print_replay_summary(run: BenchmarkRun, scenario: Scenario, num_users: int = 1) -> None:
     from rich.table import Table
 
     if not run.scenarios:
@@ -572,11 +512,11 @@ def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int 
             "\n  [yellow]No requests were sent - all were skipped or filtered out.[/yellow]"
         )
         console.print(
-            "  [yellow]Try a larger --model-context-length or a different workload.[/yellow]"
+            "  [yellow]Try a larger --model-context-length or a different scenario.[/yellow]"
         )
         return
 
-    title = f"Replay: {workload.name} -> {run.model}"
+    title = f"Replay: {scenario.name} -> {run.model}"
     if num_users > 1:
         title += f" ({num_users} users)"
 
@@ -589,18 +529,18 @@ def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int 
     table.add_column("TTFT p50", justify="right")
     table.add_column("OK", justify="right")
 
-    for scenario in run.scenarios:
-        stats = analyze_scenario(scenario)
+    for s in run.scenarios:
+        stats = analyze_scenario(s)
         if stats.successful == 0:
             row = [stats.context_profile]
             if num_users > 1:
-                row.append(str(scenario.num_users))
+                row.append(str(s.num_users))
             row += [str(stats.total_requests), "[red]FAIL[/red]", "-", f"0/{stats.total_requests}"]
             table.add_row(*row)
         else:
             row = [stats.context_profile]
             if num_users > 1:
-                row.append(str(scenario.num_users))
+                row.append(str(s.num_users))
             row += [
                 str(stats.total_requests),
                 f"{stats.tok_per_sec.median:.1f}",
@@ -612,10 +552,7 @@ def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int 
     console.print(table)
 
     ctx_len_failures = sum(
-        1
-        for s in run.scenarios
-        for r in s.failures
-        if is_context_length_error(r.error)
+        1 for s in run.scenarios for r in s.failures if is_context_length_error(r.error)
     )
     if ctx_len_failures:
         console.print(
@@ -629,22 +566,36 @@ def _print_replay_summary(run: BenchmarkRun, workload: Workload, num_users: int 
         )
 
 
-def _print_replay_dry_run(workload: Workload, url: str, num_users: int = 1) -> None:
+def _print_replay_dry_run(
+    scenario: Scenario,
+    url: str,
+    schedule: Schedule,
+    num_users: int = 1,
+) -> None:
     console.print("\n[bold yellow]DRY RUN -- no requests will be sent[/bold yellow]\n")
     console.print(f"  Target URL: {url}")
-    console.print(f"  Workload: {workload.name}")
-    console.print(f"  Total requests: {workload.total_requests}")
+    console.print(f"  Scenario: {scenario.name}")
+    console.print(f"  Tasks: {len(scenario.tasks)}")
+    console.print(f"  Total requests: {scenario.total_requests}")
+    console.print(
+        f"  Schedule: {schedule.policy}"
+        f" × {schedule.repetitions} reps"
+        f" (max {schedule.max_concurrent} concurrent)"
+    )
     if num_users > 1:
-        total = workload.total_requests * num_users
-        console.print(f"  Users: {num_users} concurrent ({total} total)")
-    console.print(f"  Experiments: {len(workload.experiment_ids)}")
-    console.print(f"  Approx tokens: {workload.total_tokens_approx:,}")
+        total = scenario.total_requests * num_users * schedule.repetitions
+        console.print(f"  Users: {num_users} concurrent ({total} total requests)")
+    console.print(f"  Approx tokens: {scenario.total_tokens_approx:,}")
 
-    for i, entry in enumerate(workload.entries[:5]):
-        tok = sum(len(m.get("content", "")) for m in entry.messages) // 4
-        console.print(f"    [{entry.seq}] ~{tok:,} tokens, max_out={entry.max_tokens}")
-    if workload.total_requests > 5:
-        console.print(f"    ... and {workload.total_requests - 5} more")
+    for task in scenario.tasks[:5]:
+        console.print(f"\n  Task: {task.id} ({task.total_requests} requests)")
+        for entry in task.entries[:3]:
+            tok = sum(len(m.get("content", "")) for m in entry.messages) // 4
+            console.print(f"    [{entry.seq}] ~{tok:,} tokens, max_out={entry.max_tokens}")
+        if task.total_requests > 3:
+            console.print(f"    ... and {task.total_requests - 3} more")
+    if len(scenario.tasks) > 5:
+        console.print(f"\n  ... and {len(scenario.tasks) - 5} more tasks")
 
 
 def _save_replay_output(config: BenchmarkConfig, run: BenchmarkRun) -> None:
@@ -664,6 +615,7 @@ def _save_replay_output(config: BenchmarkConfig, run: BenchmarkRun) -> None:
 
     if output.endswith(".md"):
         from agentic_swarm_bench.report.markdown import generate_report
+
         report = generate_report(run, json_path=json_path)
         with open(output, "w") as f:
             f.write(report)

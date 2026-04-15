@@ -18,7 +18,6 @@ def _make_run(model="test-model", endpoint="http://test:8000"):
     run = BenchmarkRun(
         model=model,
         endpoint=endpoint,
-        defeat_cache=True,
         started_at="2026-04-07T12:00:00",
     )
     for users in [1, 8]:
@@ -54,7 +53,6 @@ def _make_multi_profile_run():
     run = BenchmarkRun(
         model="test-model",
         endpoint="http://test:8000",
-        defeat_cache=True,
         started_at="2026-04-07T12:00:00",
     )
     profiles = [
@@ -94,7 +92,6 @@ def _make_empty_run():
     return BenchmarkRun(
         model="test-model",
         endpoint="http://test:8000",
-        defeat_cache=True,
         started_at="2026-04-07T12:00:00",
     )
 
@@ -104,7 +101,6 @@ def _make_all_failures_run():
     run = BenchmarkRun(
         model="fail-model",
         endpoint="http://test:8000",
-        defeat_cache=True,
         started_at="2026-04-07T12:00:00",
     )
     reqs = [
@@ -134,7 +130,6 @@ def _make_thinking_run():
     run = BenchmarkRun(
         model="reasoning-model",
         endpoint="http://test:8000",
-        defeat_cache=True,
         started_at="2026-04-07T12:00:00",
     )
     reqs = [
@@ -500,19 +495,27 @@ def test_comparison_mixed_scenarios():
     """Comparison where runs have different scenario sets."""
     run_a = _make_run(model="a")
     run_b = BenchmarkRun(
-        model="b", endpoint="http://test:8000",
-        defeat_cache=True, started_at="2026-04-07T12:00:00",
+        model="b",
+        endpoint="http://test:8000",
+        started_at="2026-04-07T12:00:00",
     )
     run_b.scenarios.append(
         ScenarioResult(
-            num_users=1, context_profile="long", context_tokens=70000,
+            num_users=1,
+            context_profile="long",
+            context_tokens=70000,
             wall_time_s=2.5,
             requests=[
                 RequestMetrics(
-                    request_id=0, user_id=0, task_id="P1",
-                    context_profile="long", context_tokens=70000,
-                    ttft_ms=300, total_time_s=2.0,
-                    completion_tokens=50, tok_per_sec=30.0,
+                    request_id=0,
+                    user_id=0,
+                    task_id="P1",
+                    context_profile="long",
+                    context_tokens=70000,
+                    ttft_ms=300,
+                    total_time_s=2.0,
+                    completion_tokens=50,
+                    tok_per_sec=30.0,
                 )
             ],
         )
@@ -531,23 +534,14 @@ def test_report_missing_timestamp():
     assert "N/A" in report
 
 
-# --- Report with defeat_cache disabled ---
+# --- Report methodology section ---
 
 
-def test_report_without_cache_defeat():
+def test_report_includes_cache_poisoning_methodology():
     run = _make_run()
-    run.defeat_cache = False
     report = generate_report(run)
-    assert "Disabled" in report
-    assert "unique random salt" not in report
-
-
-def test_report_with_cache_defeat():
-    run = _make_run()
-    run.defeat_cache = True
-    report = generate_report(run)
-    assert "Enabled" in report
-    assert "unique random salt" in report
+    assert "space-doubling" in report
+    assert "prefix caching" in report
 
 
 # --- Experience label tests ---
