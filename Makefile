@@ -1,21 +1,21 @@
 .PHONY: install dev lint test clean docker
 
 install:
-	pip install -e .
+	uv sync
 
 dev:
-	pip install -e ".[dev,proxy]"
+	uv sync --all-extras
 
 lint:
-	ruff check agentic_swarm_bench/ tests/
-	ruff format --check agentic_swarm_bench/ tests/
+	uv run ruff check agentic_swarm_bench/ tests/
+	uv run ruff format --check agentic_swarm_bench/ tests/
 
 format:
-	ruff check --fix agentic_swarm_bench/ tests/
-	ruff format agentic_swarm_bench/ tests/
+	uv run ruff check --fix agentic_swarm_bench/ tests/
+	uv run ruff format agentic_swarm_bench/ tests/
 
 test:
-	pytest tests/ -v
+	uv run pytest tests/ -v
 
 clean:
 	rm -rf build/ dist/ *.egg-info __pycache__ .pytest_cache .ruff_cache
