@@ -17,6 +17,20 @@ from agentic_swarm_bench.config import (
 console = Console()
 
 
+def _require_endpoint_model(cfg_endpoint: str, cfg_model: str) -> None:
+    """Raise a clear UsageError if endpoint or model are still unset after config resolution."""
+    if not cfg_endpoint:
+        raise click.UsageError(
+            "Missing '--endpoint' / '-e'. Pass it on the CLI, set ASB_ENDPOINT, "
+            "or add 'endpoint' to a --config YAML file."
+        )
+    if not cfg_model:
+        raise click.UsageError(
+            "Missing '--model' / '-m'. Pass it on the CLI, set ASB_MODEL, "
+            "or add 'model' to a --config YAML file."
+        )
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="agentic-swarm-bench")
 @click.option(
@@ -54,8 +68,8 @@ def main(ctx, config):
 
 
 @main.command()
-@click.option("--endpoint", "-e", required=True, help="Any OpenAI-compatible URL")
-@click.option("--model", "-m", required=True, help="Model name to use in requests")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--model", "-m", default=None, help="Model name for requests (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key (or set ASB_API_KEY)")
 @click.option(
     "--api-key-header",
@@ -179,12 +193,13 @@ def speed(
         },
     )
 
+    _require_endpoint_model(cfg.endpoint, cfg.model)
     asyncio.run(run_speed_benchmark(cfg))
 
 
 @main.command()
-@click.option("--endpoint", "-e", required=True, help="Any OpenAI-compatible URL")
-@click.option("--model", "-m", required=True, help="Model name")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--model", "-m", default=None, help="Model name (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key")
 @click.option(
     "--api-key-header",
@@ -225,12 +240,13 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
         },
     )
 
+    _require_endpoint_model(cfg.endpoint, cfg.model)
     asyncio.run(run_eval(cfg))
 
 
 @main.command()
-@click.option("--endpoint", "-e", required=True, help="Any OpenAI-compatible URL")
-@click.option("--model", "-m", required=True, help="Model name to report as")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--model", "-m", default=None, help="Model name to report as (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key for upstream")
 @click.option(
     "--api-key-header",
@@ -280,6 +296,7 @@ def agent(
         },
     )
 
+    _require_endpoint_model(cfg.endpoint, cfg.model)
     asyncio.run(run_agent_benchmark(cfg, agent_cmd=agent_cmd))
 
 
@@ -317,10 +334,21 @@ def list_tasks(tasks, tags, fmt):
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
     matched = get_tasks(task_range=tasks, tags=tag_list)
     if not matched:
+        if tasks or tags:
+            filter_parts = []
+            if tasks:
+                filter_parts.append(f"--tasks {tasks}")
+            if tags:
+                filter_parts.append(f"--tags {tags}")
+            filters = ", ".join(filter_parts)
+            raise click.UsageError(
+                f"No tasks matched the given filter ({filters}). "
+                "Run 'asb list-tasks' without filters to see all available tasks."
+            )
         matched = get_tasks()
 
     if fmt == "json":
-        console.print(json_mod.dumps(matched, indent=2))
+        print(json_mod.dumps(matched, indent=2))
         return
 
     table = Table(title=f"AgenticSwarmBench Tasks ({len(matched)} total)")
@@ -343,8 +371,8 @@ def list_tasks(tasks, tags, fmt):
 
 
 @main.command()
-@click.option("--endpoint", "-e", required=True, help="Upstream LLM endpoint URL")
-@click.option("--model", "-m", required=True, help="Model name at the upstream endpoint")
+@click.option("--endpoint", "-e", default=None, help="Upstream LLM URL (or set ASB_ENDPOINT)")
+@click.option("--model", "-m", default=None, help="Model name at upstream (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key for upstream")
 @click.option(
     "--api-key-header",
@@ -382,6 +410,11 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
         -k $ANTHROPIC_API_KEY --api-key-header x-api-key
       asb record -e http://localhost:8000 -m my-model -o session.jsonl
     """
+    import os as _os
+    endpoint = endpoint or _os.getenv("ASB_ENDPOINT") or ""
+    model = model or _os.getenv("ASB_MODEL") or ""
+    _require_endpoint_model(endpoint, model)
+
     from agentic_swarm_bench.scenarios.recorder import run_recorder
 
     run_recorder(
@@ -396,8 +429,8 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 
 
 @main.command()
-@click.option("--endpoint", "-e", required=True, help="Target OpenAI-compatible URL")
-@click.option("--model", "-m", required=True, help="Model name")
+@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option("--model", "-m", default=None, help="Model name (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key")
 @click.option(
     "--api-key-header",
@@ -524,6 +557,7 @@ def replay(
         policy=policy,
     )
 
+    _require_endpoint_model(cfg.endpoint, cfg.model)
     asyncio.run(
         _replay_scenario(
             cfg,
@@ -562,7 +596,7 @@ def list_scenarios(fmt):
     scenarios = list_builtin_scenarios()
 
     if fmt == "json":
-        console.print(json_mod.dumps(scenarios, indent=2))
+        print(json_mod.dumps(scenarios, indent=2))
         return
 
     if not scenarios:
