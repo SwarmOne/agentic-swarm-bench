@@ -8,8 +8,16 @@ from pathlib import Path
 import pytest
 
 from agentic_swarm_bench.config import BenchmarkConfig
-from agentic_swarm_bench.metrics.collector import BenchmarkRun, RequestMetrics, ScenarioResult
-from agentic_swarm_bench.scenarios.player import _replay_task_entries, _save_replay_output, replay_scenario
+from agentic_swarm_bench.metrics.collector import (
+    BenchmarkRun,
+    RequestMetrics,
+    ScenarioResult,
+)
+from agentic_swarm_bench.scenarios.player import (
+    _replay_task_entries,
+    _save_replay_output,
+    replay_scenario,
+)
 from agentic_swarm_bench.scenarios.registry import RecordingEntry
 
 # ---------------------------------------------------------------------------
