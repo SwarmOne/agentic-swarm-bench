@@ -76,3 +76,41 @@ def test_list_tasks_no_network():
 def test_list_scenarios_no_network():
     result = RUNNER.invoke(main, ["list-scenarios"])
     assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("mode", ["allcold", "allwarm", "realistic"])
+def test_speed_cache_mode_accepted(mode):
+    result = RUNNER.invoke(
+        main,
+        [
+            "speed",
+            "--endpoint", "http://localhost:8000",
+            "--model", "test-model",
+            "--dry-run",
+            "--cache-mode", mode,
+        ],
+    )
+    assert result.exit_code == 0, f"cache-mode={mode} failed:\n{result.output}"
+
+
+def test_speed_old_cache_mode_cold_rejected():
+    """Old 'cold' name is no longer valid; Click should return an error."""
+    result = RUNNER.invoke(
+        main,
+        [
+            "speed",
+            "--endpoint", "http://localhost:8000",
+            "--model", "test-model",
+            "--dry-run",
+            "--cache-mode", "cold",
+        ],
+    )
+    assert result.exit_code != 0
+
+
+@pytest.mark.parametrize("mode", ["realistic", "allcold", "allwarm"])
+def test_replay_cache_mode_in_help(mode):
+    """All three cache modes must appear in replay --help."""
+    result = RUNNER.invoke(main, ["replay", "--help"])
+    assert result.exit_code == 0
+    assert mode in result.output

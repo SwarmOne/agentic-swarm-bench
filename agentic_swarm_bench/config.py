@@ -67,7 +67,7 @@ class BenchmarkConfig:
 
     max_output_tokens: int = 512
     repetitions: int = 1
-    cache_mode: str = "cold"  # cold | warm | both
+    cache_mode: str = "allcold"  # allcold | allwarm | realistic
     timeout: float = 300.0
 
     output: Optional[str] = None

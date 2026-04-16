@@ -49,7 +49,7 @@ When Claude Code opens a file, reads 2,000 lines, edits three functions, runs te
 | **Agentic swarm context**      | Pads requests with real-looking agentic sessions - system prompts with tool definitions, prior conversation turns, code files, tool call results, error traces |
 | **Growing context simulation** | Profiles simulate how context grows during a real coding session: fresh (6K) → short (20K) → medium (40K) → long (70K) → full (100K) → xl (200K) → xxl (400K)  |
 | **Prefix cache poisoning**     | Space-doubling breaks prefix caching without adding artificial content, ensuring true cold-start measurements                                                  |
-| **Cache impact measurement**   | `--cache-mode both` runs cold + warm to show exact prefix cache speedup (10x cost difference on Anthropic)                                                     |
+| **Cache impact measurement**   | `--cache-mode realistic` runs allcold + allwarm to show exact prefix cache speedup (10x cost difference on Anthropic)                                          |
 | **Reasoning token detection**  | Automatically detects thinking/reasoning tokens (DeepSeek R1, o3, Claude Extended Thinking) and reports thinking overhead vs visible output latency            |
 | **110 agentic swarm tasks**    | 5 difficulty tiers, 5 languages (Python, TypeScript, Rust, Go, SQL) - from single-function fixes to full-stack refactors                                       |
 | **Record & replay**            | Capture real coding sessions as replayable scenarios, then benchmark them against any endpoint                                                                 |
@@ -185,8 +185,8 @@ asb speed -e http://localhost:8000 -m my-model -c 50000 -u 16
 # Cap max users - run a full suite but limit concurrency to 16
 asb speed -e http://localhost:8000 -m my-model --suite full --max-users 16
 
-# Measure prefix cache impact - runs cold then warm
-asb speed -e http://localhost:8000 -m my-model --cache-mode both
+# Measure prefix cache impact - runs allcold then allwarm
+asb speed -e http://localhost:8000 -m my-model --cache-mode realistic
 
 # JSON-only output (for CI/CD pipelines)
 asb speed -e http://localhost:8000 -m my-model --format json -o results.json
@@ -255,8 +255,8 @@ asb replay \
   -w ./scenarios/my-scenario/ \
   --repetitions 3 --max-concurrent 5 --policy sequential
 
-# Replay with prefix-cache poisoning (simulates realistic cache invalidation)
-asb replay -e URL -m MODEL -w scenario --poison
+# Default: realistic cache mode (shared prefix preserved, user context poisoned)
+asb replay -e URL -m MODEL -w scenario
 
 # Preview without sending requests
 asb replay -e URL -m MODEL -w session.jsonl --dry-run
@@ -267,7 +267,7 @@ asb replay -e URL -m MODEL -w session.jsonl --slice-tokens 1000000
 
 **Scheduling:** Control how tasks execute with `--repetitions`, `--max-concurrent`, and `--policy` (round_robin, sequential, random).
 
-**Prefix-cache poisoning:** Use `--poison` to break prefix cache between repetitions. See [Prefix Cache Poisoning](#prefix-cache-poisoning) for how this works.
+**Cache mode:** The default (`--cache-mode realistic`) preserves the shared prefix so it can be KV-cached, but poisons each user's unique context so it doesn't. Use `--cache-mode allwarm` for all-cached (optimistic) numbers or `--cache-mode allcold` to defeat caching entirely. See [Prefix Cache Poisoning](#prefix-cache-poisoning) for how this works.
 
 **Slicing scenarios:** Real sessions grow from small contexts to large ones. `--slice-tokens N` replays requests from the start until cumulative prompt tokens reach N.
 
@@ -429,25 +429,36 @@ AgenticSwarmBench defeats the prefix cache using **space doubling**: it finds is
 This mimics what actually happens in real coding sessions: when an agent edits a file mid-conversation, the context changes from the edit point onward, breaking the cache naturally.
 
 - **`asb speed`**: Each request gets a unique space-doubling pattern seeded by task ID, user ID, and timestamp
-- **`asb replay --poison`**: Finds the shared prefix across all tasks (typically the system prompt), then applies space-doubling only after that prefix. Different repetitions get different patterns.
+- **`asb replay`**: Finds the longest common prefix across all tasks (typically the system prompt), preserves it so the server can cache it, then applies space-doubling only after that prefix. Different repetitions get different patterns.
 
 ### Controlling cache behavior
 
+Both `asb speed` and `asb replay` accept `--cache-mode` with three options:
+
+| Mode | What it does |
+|---|---|
+| `allcold` | Every request defeats the KV cache via space-doubling. Measures true cold-start latency. Default for `asb speed`. |
+| `allwarm` | No poisoning — requests arrive as-is and the server can cache freely. Measures best-case latency. |
+| `realistic` | Preserves the shared prefix (system prompt) so it can be cached; poisons only the unique per-user portion. Default for `asb replay`. |
+
 ```bash
-# Default: cold cache (space-doubling enabled)
+# speed: default is allcold (true cold-start numbers)
 asb speed -e URL -m MODEL
 
-# Measure production-like performance with caching
-asb speed -e URL -m MODEL --cache-mode warm
+# speed: measure both extremes in one run
+asb speed -e URL -m MODEL --cache-mode realistic
 
-# Measure BOTH - shows exact cache speedup
-asb speed -e URL -m MODEL --cache-mode both
+# speed: best-case cached numbers
+asb speed -e URL -m MODEL --cache-mode allwarm
 
-# Replay with poisoning
-asb replay -e URL -m MODEL -w scenario --poison
+# replay: default is realistic (production-accurate)
+asb replay -e URL -m MODEL -w scenario
+
+# replay: all-cached (optimistic upper bound)
+asb replay -e URL -m MODEL -w scenario --cache-mode allwarm
 ```
 
-`--cache-mode both` runs each scenario twice (first cold, then warm) and reports the delta. Anthropic charges 10x less for cached tokens ($0.30 vs $3.00/M), so knowing your cache hit rate matters.
+`--cache-mode realistic` on `asb speed` runs each scenario twice (allcold then allwarm) and reports both. Anthropic charges 10x less for cached tokens ($0.30 vs $3.00/M), so knowing your cache hit rate matters.
 
 ## Reasoning Token Detection
 

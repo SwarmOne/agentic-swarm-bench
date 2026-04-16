@@ -462,7 +462,7 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
             "Try a larger --model-context-length or a different --suite.",
         )
         raise SystemExit(1)
-    cache_mode = getattr(config, "cache_mode", "cold")
+    cache_mode = getattr(config, "cache_mode", "allcold")
 
     max_context_tokens = max((t for _, _, t in scenarios), default=0)
     profiles = sorted(
@@ -572,12 +572,16 @@ def _print_dry_run(
     msg = f"[{WARN_COLOR} bold]DRY RUN - no requests will be sent[/{WARN_COLOR} bold]"
     console.print(f"\n  {msg}\n")
 
-    cache_label = {"cold": "poisoned (cold)", "warm": "allowed (warm)", "both": "cold + warm"}
+    cache_label = {
+        "allcold": "all cold (cache defeated)",
+        "allwarm": "all warm (cache allowed)",
+        "realistic": "realistic (allcold + allwarm)",
+    }
     rows = [
         ("URL", url),
         ("Auth", config.api_key_header),
         ("Max output", f"{config.max_output_tokens} tokens"),
-        ("Cache", cache_label.get(getattr(config, "cache_mode", "cold"), "poisoned")),
+        ("Cache", cache_label.get(getattr(config, "cache_mode", "allcold"), "poisoned")),
         ("Timeout", f"{config.timeout:.0f}s"),
     ]
     if config.random_context:
@@ -635,12 +639,23 @@ def _save_outputs(config: BenchmarkConfig, run: BenchmarkRun) -> None:
 
 
 def _get_cache_passes(cache_mode: str) -> list[tuple[str, bool]]:
-    """Return (label, defeat_cache) pairs for the selected cache mode."""
-    if cache_mode == "both":
-        return [("cold", True), ("warm", False)]
-    if cache_mode == "warm":
-        return [("warm", False)]
-    return [("cold", True)]
+    """Return (label, defeat_cache) pairs for the selected cache mode.
+
+    realistic = run both allcold + allwarm passes to measure the full picture.
+    allcold   = every request defeats the KV cache (space-doubling poison).
+    allwarm   = every request can benefit from cache (no poisoning).
+
+    Old names (cold/warm/both) are accepted for backward compatibility with
+    YAML configs written before the rename.
+    """
+    _ALIASES = {"cold": "allcold", "warm": "allwarm", "both": "realistic"}
+    cache_mode = _ALIASES.get(cache_mode, cache_mode)
+
+    if cache_mode == "realistic":
+        return [("allcold", True), ("allwarm", False)]
+    if cache_mode == "allwarm":
+        return [("allwarm", False)]
+    return [("allcold", True)]
 
 
 
