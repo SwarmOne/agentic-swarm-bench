@@ -265,7 +265,7 @@ def test_build_config_yaml_unknown_key_raises(tmp_path):
 
 
 def test_model_context_length_filters_scenarios():
-    # fresh=6K, short=20K, medium=40K — set limit to 25K; expect only fresh + short
+    # fresh=6K, short=20K, medium=40K - set limit to 25K; expect only fresh + short
     cfg = BenchmarkConfig(model_context_length=25000)
     scenarios = cfg.resolved_scenarios
     token_counts = [t for _, _, t in scenarios]

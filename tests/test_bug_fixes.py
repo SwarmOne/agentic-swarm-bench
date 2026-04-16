@@ -115,7 +115,7 @@ def _make_failed_run(model: str, profile: str = "fresh"):
 
 
 def test_compare_candidate_full_failure_not_tied():
-    """When candidate has zero successes, baseline should win — not 'Tied'."""
+    """When candidate has zero successes, baseline should win - not 'Tied'."""
     baseline = _make_run("fast-model", tok_per_sec=60.0, profile="fresh")
     candidate = _make_failed_run("broken-model", profile="fresh")
 

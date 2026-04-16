@@ -138,7 +138,7 @@ def test_upstream_headers_bearer(tmp_path):
         api_key="sk-test",
         log_dir=str(tmp_path),
     )
-    # Access the closure-private helper indirectly — verify via app state
+    # Access the closure-private helper indirectly - verify via app state
     # (The public contract is that requests to upstream carry the header.)
     assert app is not None  # app created successfully with api_key
 
