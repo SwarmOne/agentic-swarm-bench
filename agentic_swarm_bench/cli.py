@@ -7,6 +7,13 @@ import asyncio
 import click
 from rich.console import Console
 
+from agentic_swarm_bench import __version__
+from agentic_swarm_bench.config import (
+    CONTEXT_PROFILES,
+    SUITE_CONFIGS,
+    build_config,
+)
+
 
 class DefaultGroup(click.Group):
     """Click Group that dispatches to a default subcommand when none is recognised.
@@ -18,7 +25,9 @@ class DefaultGroup(click.Group):
 
     ignore_unknown_options = True
 
-    def __init__(self, *args, default: str | None = None, default_if_no_args: bool = False, **kwargs):
+    def __init__(
+        self, *args, default: str | None = None, default_if_no_args: bool = False, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self._default_cmd = default
         self._default_if_no_args = default_if_no_args
@@ -32,7 +41,7 @@ class DefaultGroup(click.Group):
         cmd = super().get_command(ctx, cmd_name)
         if cmd is not None:
             return cmd
-        # Unknown token — treat it as the first arg of the default command.
+        # Unknown token - treat it as the first arg of the default command.
         ctx.meta["_default_arg0"] = cmd_name
         return super().get_command(ctx, self._default_cmd)
 
@@ -55,13 +64,6 @@ class DefaultGroup(click.Group):
         if commands:
             with formatter.section("Commands"):
                 formatter.write_dl(commands)
-
-from agentic_swarm_bench import __version__
-from agentic_swarm_bench.config import (
-    CONTEXT_PROFILES,
-    SUITE_CONFIGS,
-    build_config,
-)
 
 console = Console()
 
