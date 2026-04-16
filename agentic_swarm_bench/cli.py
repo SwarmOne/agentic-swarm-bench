@@ -14,6 +14,57 @@ from agentic_swarm_bench.config import (
     build_config,
 )
 
+
+class DefaultGroup(click.Group):
+    """Click Group that dispatches to a default subcommand when none is recognised.
+
+    The key trick is ``ignore_unknown_options = True``: the group passes
+    unrecognised tokens straight through rather than erroring, so options
+    like ``-e``/``-m``/``-w`` land in the subcommand's parser unchanged.
+    """
+
+    ignore_unknown_options = True
+
+    def __init__(
+        self, *args, default: str | None = None, default_if_no_args: bool = False, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self._default_cmd = default
+        self._default_if_no_args = default_if_no_args
+
+    def parse_args(self, ctx, args):
+        if not args and self._default_if_no_args:
+            args = [self._default_cmd]
+        return super().parse_args(ctx, args)
+
+    def get_command(self, ctx, cmd_name):
+        cmd = super().get_command(ctx, cmd_name)
+        if cmd is not None:
+            return cmd
+        # Unknown token - treat it as the first arg of the default command.
+        ctx.meta["_default_arg0"] = cmd_name
+        return super().get_command(ctx, self._default_cmd)
+
+    def resolve_command(self, ctx, args):
+        cmd_name, cmd, remaining = super().resolve_command(ctx, args)
+        if "_default_arg0" in ctx.meta:
+            remaining = [ctx.meta.pop("_default_arg0")] + remaining
+            cmd_name = remaining[0] if remaining else cmd_name
+        return cmd_name, cmd, remaining
+
+    def format_commands(self, ctx, formatter):
+        """Mark the default command with * in the help listing."""
+        commands = []
+        for name in self.list_commands(ctx):
+            cmd = self.commands.get(name)
+            if cmd is None or cmd.hidden:
+                continue
+            label = name + ("*" if name == self._default_cmd else "")
+            commands.append((label, cmd.get_short_help_str(limit=formatter.width)))
+        if commands:
+            with formatter.section("Commands"):
+                formatter.write_dl(commands)
+
 console = Console()
 
 
@@ -31,7 +82,7 @@ def _require_endpoint_model(cfg_endpoint: str, cfg_model: str) -> None:
         )
 
 
-@click.group()
+@click.group(cls=DefaultGroup, default="replay", default_if_no_args=True)
 @click.version_option(version=__version__, prog_name="agentic-swarm-bench")
 @click.option(
     "--config",
