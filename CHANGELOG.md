@@ -2,12 +2,29 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
-## [Unreleased]
+## [3.0.0] - 2026-04-16
 
-### Changed
+One-day follow-up to 2.0.0 polishing the CLI surface from launch feedback. Breaking flag renames with a clean 1:1 migration path.
 
-- **Cache mode naming:** `--cache-mode cold/warm/both` (on `asb speed`) renamed to `allcold/allwarm/realistic`. `realistic` runs both passes (allcold then allwarm) to measure exact cache speedup.
-- **Replay cache mode:** `asb replay --poison/--no-poison` replaced by `--cache-mode [realistic|allcold|allwarm]`. `realistic` is now the **default** - shared prefix is preserved for KV caching, unique user context is poisoned. Use `--cache-mode allwarm` to send requests as recorded (no poisoning).
+### Changed (breaking)
+
+- **Cache mode naming:** `--cache-mode cold/warm/both` (on `asb speed`) renamed to `allcold/allwarm/realistic`. `realistic` runs both passes (allcold then allwarm) to measure exact cache speedup. (#4)
+- **Replay cache mode:** `asb replay --poison/--no-poison` replaced by `--cache-mode [realistic|allcold|allwarm]`. `realistic` is now the **default** - shared prefix is preserved for KV caching, unique user context is poisoned. Use `--cache-mode allwarm` to send requests as recorded (no poisoning). (#4)
+
+### Added
+
+- **Default CLI subcommand:** bare `asb -e URL -m MODEL -w scenario` now dispatches to `replay` without typing the subcommand. Explicit subcommands are unchanged. (#5)
+- **Backwards-compat aliases:** old YAML configs (`cache_mode: cold/warm/both`) still resolve to the new mode names instead of silently falling through. (#4)
+- **Comprehensive test suite:** 409 tests (up from 266) covering CLI, eval/direct/tier-3 runners, proxy server, recorder, config env resolution, tool-use/tool-result translation, thinking-token roundtrip, and report generation. (#3)
+- **Record/replay as headline feature:** README leads with record → replay quick-start; mode comparison table reordered. (#6)
+
+### Fixed
+
+- `--format json` now emits valid JSON. Rich's `console.print()` was wrapping long lines and injecting bare newlines into the output; switched to stdlib `print()`. (#2)
+- `asb compare` "Tied" count no longer inflates from scenarios where both sides have zero successes. These are surfaced as `N excluded: zero completions` in the comparison report. (#2)
+- `ASB_ENDPOINT` / `ASB_MODEL` environment variables are now respected. Click's `required=True` was firing before env/YAML values could merge; added `_require_endpoint_model()` helper that runs after `build_config`. (#2)
+- `asb eval -t <filter>` that matches no tasks now raises `UsageError` instead of silently running the full 110-task suite. (#2)
+- Deduplicated `_detect_upstream_api` that was copied verbatim across `proxy/server.py` and `scenarios/recorder.py`; both now import from `proxy/utils.py`. (#3)
 
 ### Migration
 

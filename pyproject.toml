@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-swarm-bench"
-version = "2.0.0"
+version = "3.0.0"
 description = "Open-source benchmark for LLM inference on agentic scenarios"
 readme = "README.md"
 license = {text = "Apache-2.0"}
