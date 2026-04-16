@@ -7,17 +7,17 @@ All notable changes to AgenticSwarmBench are documented here.
 ### Changed
 
 - **Cache mode naming:** `--cache-mode cold/warm/both` (on `asb speed`) renamed to `allcold/allwarm/realistic`. `realistic` runs both passes (allcold then allwarm) to measure exact cache speedup.
-- **Replay cache mode:** `asb replay --poison/--no-poison` replaced by `--cache-mode [realistic|allcold|allwarm]`. `realistic` is now the **default** — shared prefix is preserved for KV caching, unique user context is poisoned. Use `--cache-mode allwarm` to send requests as recorded (no poisoning).
+- **Replay cache mode:** `asb replay --poison/--no-poison` replaced by `--cache-mode [realistic|allcold|allwarm]`. `realistic` is now the **default** - shared prefix is preserved for KV caching, unique user context is poisoned. Use `--cache-mode allwarm` to send requests as recorded (no poisoning).
 
 ### Migration
 
-| Old | New |
-|---|---|
-| `asb speed --cache-mode cold` | `asb speed --cache-mode allcold` |
-| `asb speed --cache-mode warm` | `asb speed --cache-mode allwarm` |
-| `asb speed --cache-mode both` | `asb speed --cache-mode realistic` |
-| `asb replay --poison` | `asb replay` (realistic is now default) |
-| `asb replay` (no flag) | `asb replay --cache-mode allwarm` |
+| Old                           | New                                     |
+| ----------------------------- | --------------------------------------- |
+| `asb speed --cache-mode cold` | `asb speed --cache-mode allcold`        |
+| `asb speed --cache-mode warm` | `asb speed --cache-mode allwarm`        |
+| `asb speed --cache-mode both` | `asb speed --cache-mode realistic`      |
+| `asb replay --poison`         | `asb replay` (realistic is now default) |
+| `asb replay` (no flag)        | `asb replay --cache-mode allwarm`       |
 
 ---
 

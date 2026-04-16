@@ -246,7 +246,7 @@ def _print_results(
             )
     else:
         console.print(
-            "  [yellow]No metrics.jsonl found — proxy may not "
+            "  [yellow]No metrics.jsonl found - proxy may not "
             "have received requests[/yellow]"
         )
 
