@@ -1,5 +1,7 @@
 """Tests for configuration management and endpoint resolution."""
 
+import pytest
+
 from agentic_swarm_bench.config import (
     BenchmarkConfig,
     build_config,
@@ -155,3 +157,122 @@ class TestResolveEndpoint:
         assert resolve_endpoint("https://api.openai.com/v1") == (
             "https://api.openai.com/v1/chat/completions"
         )
+
+
+# ---------------------------------------------------------------------------
+# _int_or_none
+# ---------------------------------------------------------------------------
+
+
+class TestIntOrNone:
+    def test_none_returns_none(self):
+        from agentic_swarm_bench.config import _int_or_none
+
+        assert _int_or_none(None) is None
+
+    def test_valid_int_string(self):
+        from agentic_swarm_bench.config import _int_or_none
+
+        assert _int_or_none("42") == 42
+
+    def test_invalid_string_returns_none(self):
+        from agentic_swarm_bench.config import _int_or_none
+
+        assert _int_or_none("not-a-number") is None
+
+    def test_float_string_returns_none(self):
+        from agentic_swarm_bench.config import _int_or_none
+
+        assert _int_or_none("3.14") is None
+
+    def test_zero_string(self):
+        from agentic_swarm_bench.config import _int_or_none
+
+        assert _int_or_none("0") == 0
+
+
+# ---------------------------------------------------------------------------
+# BenchmarkConfig.from_env
+# ---------------------------------------------------------------------------
+
+
+class TestFromEnv:
+    def test_reads_endpoint_and_model(self, monkeypatch):
+        monkeypatch.setenv("ASB_ENDPOINT", "http://env-server:8000")
+        monkeypatch.setenv("ASB_MODEL", "env-model")
+        cfg = BenchmarkConfig.from_env()
+        assert cfg.endpoint == "http://env-server:8000"
+        assert cfg.model == "env-model"
+
+    def test_reads_api_key(self, monkeypatch):
+        monkeypatch.setenv("ASB_API_KEY", "sk-env-key")
+        cfg = BenchmarkConfig.from_env()
+        assert cfg.api_key == "sk-env-key"
+
+    def test_reads_context_tokens(self, monkeypatch):
+        monkeypatch.setenv("ASB_CONTEXT_TOKENS", "50000")
+        cfg = BenchmarkConfig.from_env()
+        assert cfg.context_tokens == 50000
+
+    def test_reads_model_context_length(self, monkeypatch):
+        monkeypatch.setenv("ASB_MODEL_CONTEXT_LENGTH", "8192")
+        cfg = BenchmarkConfig.from_env()
+        assert cfg.model_context_length == 8192
+
+    def test_invalid_context_tokens_becomes_none(self, monkeypatch):
+        monkeypatch.setenv("ASB_CONTEXT_TOKENS", "bad")
+        cfg = BenchmarkConfig.from_env()
+        assert cfg.context_tokens is None
+
+    def test_missing_vars_give_defaults(self, monkeypatch):
+        for var in ("ASB_ENDPOINT", "ASB_MODEL", "ASB_API_KEY",
+                    "ASB_CONTEXT_TOKENS", "ASB_MODEL_CONTEXT_LENGTH"):
+            monkeypatch.delenv(var, raising=False)
+        cfg = BenchmarkConfig.from_env()
+        assert cfg.endpoint == ""
+        assert cfg.model == ""
+
+
+# ---------------------------------------------------------------------------
+# build_config: env var priority
+# ---------------------------------------------------------------------------
+
+
+def test_build_config_env_overrides_yaml(tmp_path, monkeypatch):
+    yaml_file = tmp_path / "config.yml"
+    yaml_file.write_text("model: yaml-model\n")
+    monkeypatch.setenv("ASB_MODEL", "env-model")
+    cfg = build_config(config_file=str(yaml_file))
+    assert cfg.model == "env-model"
+
+
+def test_build_config_cli_overrides_env(monkeypatch):
+    monkeypatch.setenv("ASB_MODEL", "env-model")
+    cfg = build_config(cli_args={"model": "cli-model"})
+    assert cfg.model == "cli-model"
+
+
+def test_build_config_yaml_unknown_key_raises(tmp_path):
+    yaml_file = tmp_path / "config.yml"
+    yaml_file.write_text("model: test\nunknown_key: value\n")
+    with pytest.raises((TypeError, KeyError)):
+        build_config(config_file=str(yaml_file))
+
+
+# ---------------------------------------------------------------------------
+# model_context_length filters resolved_scenarios
+# ---------------------------------------------------------------------------
+
+
+def test_model_context_length_filters_scenarios():
+    # fresh=6K, short=20K, medium=40K — set limit to 25K; expect only fresh + short
+    cfg = BenchmarkConfig(model_context_length=25000)
+    scenarios = cfg.resolved_scenarios
+    token_counts = [t for _, _, t in scenarios]
+    assert all(t <= 25000 for t in token_counts)
+    assert any(t <= 20000 for t in token_counts)
+
+
+def test_model_context_length_all_filtered_empty():
+    cfg = BenchmarkConfig(model_context_length=1)
+    assert cfg.resolved_scenarios == []
