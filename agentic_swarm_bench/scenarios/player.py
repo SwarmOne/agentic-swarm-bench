@@ -8,8 +8,14 @@ With a Schedule, tasks from the scenario are ordered (round_robin,
 sequential, or random), repeated N times, and executed with capped
 concurrency via an asyncio semaphore.
 
-With ``--poison``, spaces after the common prefix are randomly doubled
-to simulate realistic KV cache invalidation.
+Cache modes:
+  realistic  Poison only the non-shared portion of each request. The LCP
+             (longest common prefix) across tasks is preserved so the
+             server can cache it; everything beyond the LCP is varied per
+             execution to simulate unique user context. This is the default.
+  allcold    Poison all messages (lcp_len=0) so every request defeats the
+             KV cache entirely.
+  allwarm    No poisoning. Requests are sent exactly as recorded.
 """
 
 from __future__ import annotations
@@ -318,24 +324,34 @@ async def replay_scenario(
     num_users: int = 1,
     model_context_length: int | None = None,
     schedule: Schedule | None = None,
-    poison: bool = False,
+    cache_mode: str = "realistic",
 ) -> BenchmarkRun:
-    """Replay a recorded scenario against the configured endpoint."""
+    """Replay a recorded scenario against the configured endpoint.
+
+    cache_mode:
+      realistic  Preserve shared LCP, poison divergent per-user portion (default).
+      allcold    Poison everything (lcp_len=0), every request defeats the cache.
+      allwarm    No poisoning, requests sent as recorded.
+    """
     scenario = get_scenario(scenario_path)
 
     if schedule is None:
         schedule = Schedule()
-
-    lcp_len = compute_scenario_lcp(scenario.tasks) if poison else 0
 
     url = resolve_endpoint(config.endpoint)
     headers = _build_headers(config)
 
     raw_queue = build_execution_queue(scenario.tasks, schedule)
 
-    if poison:
+    if cache_mode == "realistic":
+        lcp_len = compute_scenario_lcp(scenario.tasks)
         execution_queue = [
             (poison_task_execution(task, lcp_len, exec_idx), exec_idx)
+            for task, exec_idx in raw_queue
+        ]
+    elif cache_mode == "allcold":
+        execution_queue = [
+            (poison_task_execution(task, lcp_len=0, execution_index=exec_idx), exec_idx)
             for task, exec_idx in raw_queue
         ]
     else:
@@ -360,8 +376,12 @@ async def replay_scenario(
         console.print(f"  Total executions: {total_task_executions} tasks")
     if num_users > 1:
         console.print(f"  Users: {num_users} concurrent per task")
-    if poison:
-        console.print("  Poisoning: [yellow]ON[/yellow] (prefix-cache invalidation, pre-applied)")
+    cache_mode_labels = {
+        "realistic": "[yellow]realistic[/yellow] (shared prefix cached, unique context poisoned)",
+        "allcold": "[red]allcold[/red] (all requests defeat cache)",
+        "allwarm": "[green]allwarm[/green] (no poisoning, cache allowed)",
+    }
+    console.print(f"  Cache mode: {cache_mode_labels.get(cache_mode, cache_mode)}")
     if slice_tokens is not None:
         console.print(f"  Slice: ≤{slice_tokens:,} prompt tokens per task")
     if model_context_length is not None:

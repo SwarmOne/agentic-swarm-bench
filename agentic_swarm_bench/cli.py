@@ -108,9 +108,9 @@ def main(ctx, config):
 @click.option("--max-tokens", type=int, default=512, help="Max output tokens per request")
 @click.option(
     "--cache-mode",
-    type=click.Choice(["cold", "warm", "both"]),
+    type=click.Choice(["allcold", "allwarm", "realistic"]),
     default=None,
-    help="Cache test mode: cold, warm, or both (measures cache speedup)",
+    help="Cache mode: allcold (defeat cache), allwarm (allow cache), realistic (both passes)",
 )
 @click.option("--timeout", type=float, default=300.0, help="Request timeout in seconds")
 @click.option("--output", "-o", default=None, help="Save results to file (.md or .json)")
@@ -485,9 +485,14 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     help="Task execution order: round_robin, sequential, or random (default: round_robin)",
 )
 @click.option(
-    "--poison/--no-poison",
-    default=False,
-    help="Apply prefix-cache poisoning to simulate realistic KV cache invalidation",
+    "--cache-mode",
+    type=click.Choice(["realistic", "allcold", "allwarm"]),
+    default="realistic",
+    show_default=True,
+    help=(
+        "Cache mode: realistic (poison non-shared prefix, default), "
+        "allcold (poison everything), allwarm (no poisoning)"
+    ),
 )
 @click.pass_context
 def replay(
@@ -506,7 +511,7 @@ def replay(
     repetitions,
     max_concurrent,
     policy,
-    poison,
+    cache_mode,
 ):
     """Replay a recorded scenario against any endpoint.
 
@@ -516,13 +521,20 @@ def replay(
     endpoint, measuring TTFT, tok/s, and throughput.
 
     \b
+    Cache modes:
+      realistic  Poison the per-user portion of each request (default).
+                 Shared prefix is preserved so it can be KV-cached;
+                 unique user context is varied to defeat caching there.
+                 This is the most production-realistic measurement.
+      allcold    Poison all messages including shared prefix. Every
+                 request defeats the cache entirely.
+      allwarm    No poisoning. Requests sent as recorded; the server
+                 can serve from KV cache freely.
+
+    \b
     Use --repetitions to run each task N times. Use --policy to control
     execution order (round_robin, sequential, or random). Use
     --max-concurrent to cap how many tasks run at once.
-
-    \b
-    Use --poison to simulate realistic KV cache invalidation by
-    randomly doubling spaces after the common prefix.
 
     \b
     Use --users to simulate N concurrent users per task. Use
@@ -533,7 +545,7 @@ def replay(
       asb replay -e http://localhost:8000 -m my-model -w session.jsonl
       asb replay -e http://localhost:8000 -m my-model -w ./scenarios/my-scenario/
       asb replay -e URL -m MODEL -w scenario -r 3 --max-concurrent 5 --policy sequential
-      asb replay -e URL -m MODEL -w scenario --poison
+      asb replay -e URL -m MODEL -w scenario --cache-mode allwarm
     """
     from agentic_swarm_bench.scenarios.player import replay_scenario as _replay_scenario
     from agentic_swarm_bench.scenarios.schedule import Schedule
@@ -566,7 +578,7 @@ def replay(
             num_users=users,
             model_context_length=model_context_length,
             schedule=sched,
-            poison=poison,
+            cache_mode=cache_mode,
         )
     )
 

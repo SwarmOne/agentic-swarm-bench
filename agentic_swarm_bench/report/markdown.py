@@ -637,5 +637,5 @@ def _ascii_chart(
 
 
 def _base_profile(profile: str) -> str:
-    """Strip cache pass labels like 'medium (cold)' -> 'medium'."""
+    """Strip cache pass labels like 'medium (allcold)' -> 'medium'."""
     return profile.split("(")[0].strip()

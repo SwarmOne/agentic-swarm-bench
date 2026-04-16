@@ -2,6 +2,25 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- **Cache mode naming:** `--cache-mode cold/warm/both` (on `asb speed`) renamed to `allcold/allwarm/realistic`. `realistic` runs both passes (allcold then allwarm) to measure exact cache speedup.
+- **Replay cache mode:** `asb replay --poison/--no-poison` replaced by `--cache-mode [realistic|allcold|allwarm]`. `realistic` is now the **default** — shared prefix is preserved for KV caching, unique user context is poisoned. Use `--cache-mode allwarm` to send requests as recorded (no poisoning).
+
+### Migration
+
+| Old | New |
+|---|---|
+| `asb speed --cache-mode cold` | `asb speed --cache-mode allcold` |
+| `asb speed --cache-mode warm` | `asb speed --cache-mode allwarm` |
+| `asb speed --cache-mode both` | `asb speed --cache-mode realistic` |
+| `asb replay --poison` | `asb replay` (realistic is now default) |
+| `asb replay` (no flag) | `asb replay --cache-mode allwarm` |
+
+---
+
 ## [2.0.0] - 2026-04-15
 
 ### Changed
@@ -23,7 +42,7 @@ All notable changes to AgenticSwarmBench are documented here.
 - **110 agentic swarm tasks** across 5 difficulty tiers (trivial → expert) and 5 languages (Python, TypeScript, Rust, Go, SQL).
 - **Seven context profiles:** `fresh` (6K), `short` (20K), `medium` (40K), `long` (70K), `full` (100K), `xl` (200K), `xxl` (400K) - simulating real coding sessions from first prompt to deep multi-file debugging.
 - **`--model-context-length` flag** - automatically skips profiles that exceed the model's context window.
-- **Prefix cache defeat** with unique per-request salt, plus `--cache-mode both` to measure exact cache speedup.
+- **Prefix cache defeat** with unique per-request salt, plus `--cache-mode realistic` to measure exact cache speedup (runs allcold + allwarm).
 - **Reasoning token detection** for DeepSeek R1, o3, and Claude Extended Thinking - reports thinking overhead vs visible output latency.
 - **Workload recording** (`asb record`) - recording proxy that captures real coding sessions as replayable JSONL workload files.
 - **Workload replay** (`asb replay`) - replay recorded sessions against any endpoint with context-size grouping and full metrics.

@@ -81,7 +81,7 @@ def test_speed_benchmark_e2e():
         model="mock-model",
         context_tokens=100,
         users=2,
-        cache_mode="warm",
+        cache_mode="allwarm",
         timeout=10.0,
         max_output_tokens=64,
     )
@@ -113,7 +113,7 @@ def test_speed_benchmark_report_generation(tmp_path):
         model="mock-model",
         context_tokens=100,
         users=1,
-        cache_mode="warm",
+        cache_mode="allwarm",
         timeout=10.0,
         output=output_path,
     )

@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentic_swarm_bench.config import BenchmarkConfig
 from agentic_swarm_bench.metrics.collector import BenchmarkRun, RequestMetrics, ScenarioResult
-from agentic_swarm_bench.scenarios.player import _replay_task_entries, _save_replay_output
+from agentic_swarm_bench.scenarios.player import _replay_task_entries, _save_replay_output, replay_scenario
 from agentic_swarm_bench.scenarios.registry import RecordingEntry
 
 # ---------------------------------------------------------------------------
@@ -139,3 +141,22 @@ def test_save_replay_output_bare_name_appends_json(tmp_path):
     config = BenchmarkConfig(output=output)
     _save_replay_output(config, _make_run())
     assert (tmp_path / "results.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# cache_mode: dry_run with each mode exits cleanly
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["realistic", "allcold", "allwarm"])
+async def test_replay_cache_mode_dry_run(tmp_path, mode):
+    """All three cache modes should work with dry_run=True (no HTTP)."""
+    scenario_path = _make_scenario_jsonl(tmp_path)
+    config = BenchmarkConfig(
+        endpoint="http://fake:8000",
+        model="test-model",
+        dry_run=True,
+    )
+    run = await replay_scenario(config, scenario_path, cache_mode=mode)
+    assert isinstance(run, BenchmarkRun)
+    assert len(run.scenarios) == 0
