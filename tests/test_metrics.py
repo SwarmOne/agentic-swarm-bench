@@ -197,3 +197,77 @@ class TestIsContextLengthError:
     def test_case_insensitive(self):
         assert is_context_length_error("HTTP 400: PROMPT IS TOO LONG") is True
         assert is_context_length_error("HTTP 400: Context_Length_Exceeded") is True
+
+
+# ---------------------------------------------------------------------------
+# ITL edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_itl_empty_list_returns_zero():
+    m = RequestMetrics(completion_tokens=1)
+    assert m.itl_p50 == 0.0
+    assert m.itl_p95 == 0.0
+
+
+def test_itl_single_element():
+    m = RequestMetrics(completion_tokens=1, itl_ms=[55.0])
+    assert m.itl_p50 == 55.0
+    assert m.itl_p95 == 55.0
+
+
+def test_itl_two_elements():
+    m = RequestMetrics(completion_tokens=2, itl_ms=[10.0, 90.0])
+    assert m.itl_p50 == 90.0  # sorted[1] (len//2 = 1)
+    assert m.itl_p95 == 90.0
+
+
+# ---------------------------------------------------------------------------
+# to_dict / BenchmarkRun.load roundtrip with thinking tokens
+# ---------------------------------------------------------------------------
+
+
+def test_thinking_roundtrip_via_benchmark_run(tmp_path):
+    run = BenchmarkRun(model="think-model", endpoint="http://test:8000", started_at="2026-01-01")
+    m = RequestMetrics(
+        request_id=1,
+        completion_tokens=100,
+        thinking_tokens=60,
+        ttft_thinking_ms=200.0,
+        ttft_visible_ms=5000.0,
+        tok_per_sec=30.0,
+    )
+    scenario = ScenarioResult(num_users=1, wall_time_s=1.0, requests=[m])
+    run.scenarios.append(scenario)
+
+    path = str(tmp_path / "thinking_run.json")
+    run.save(path)
+    loaded = BenchmarkRun.load(path)
+
+    r = loaded.scenarios[0].requests[0]
+    assert r.thinking_tokens == 60
+    assert r.ttft_thinking_ms == 200.0
+    assert r.ttft_visible_ms == 5000.0
+    assert r.visible_tokens == 40
+    assert r.thinking_overhead_ms == pytest.approx(4800.0)
+
+
+def test_to_dict_excludes_thinking_fields_when_zero():
+    m = RequestMetrics(completion_tokens=50, thinking_tokens=0)
+    d = m.to_dict()
+    assert "thinking_tokens" not in d
+    assert "ttft_thinking_ms" not in d
+
+
+def test_to_dict_includes_thinking_fields_when_nonzero():
+    m = RequestMetrics(
+        completion_tokens=100,
+        thinking_tokens=30,
+        ttft_thinking_ms=100.0,
+        ttft_visible_ms=500.0,
+    )
+    d = m.to_dict()
+    assert d["thinking_tokens"] == 30
+    assert d["ttft_thinking_ms"] == 100.0
+    assert d["ttft_visible_ms"] == 500.0
+    assert "thinking_overhead_ms" in d

@@ -571,3 +571,60 @@ class TestExperienceLabel:
     def test_slight_pause(self):
         label = _experience_label(4000, 60)
         assert "Slight pause" in label
+
+
+# ---------------------------------------------------------------------------
+# Thinking token reports
+# ---------------------------------------------------------------------------
+
+
+def test_generate_report_with_thinking_run():
+    run = _make_thinking_run()
+    report = generate_report(run)
+    assert "thinking" in report.lower() or "reasoning" in report.lower()
+
+
+def test_generate_report_thinking_does_not_crash():
+    run = _make_thinking_run()
+    report = generate_report(run)
+    assert isinstance(report, str)
+    assert len(report) > 100
+
+
+def test_generate_comparison_thinking_vs_normal():
+    thinking_run = _make_thinking_run()
+    normal_run = _make_run(model="normal-model")
+    report = generate_comparison(thinking_run, normal_run)
+    assert isinstance(report, str)
+    assert "reasoning-model" in report
+    assert "normal-model" in report
+
+
+def test_generate_comparison_both_thinking():
+    run_a = _make_thinking_run()
+    run_b = _make_thinking_run()
+    report = generate_comparison(run_a, run_b)
+    assert isinstance(report, str)
+    assert "reasoning-model" in report
+
+
+# ---------------------------------------------------------------------------
+# Methodology block present for all fixture types
+# ---------------------------------------------------------------------------
+
+
+def test_methodology_in_normal_report():
+    report = generate_report(_make_run())
+    lower = report.lower()
+    assert "methodology" in lower or "how " in lower or "benchmark" in lower
+
+
+def test_methodology_in_empty_run_report():
+    report = generate_report(_make_empty_run())
+    assert isinstance(report, str)
+
+
+def test_methodology_in_thinking_run_report():
+    report = generate_report(_make_thinking_run())
+    assert isinstance(report, str)
+    assert len(report) > 50

@@ -127,3 +127,103 @@ def test_poison_messages_returns_new_list():
     assert len(poisoned) == 2
     assert poisoned is not msgs
     assert poisoned[0] is not msgs[0]
+
+
+# ---------------------------------------------------------------------------
+# Translator: tool_use and tool_result blocks
+# ---------------------------------------------------------------------------
+
+
+def test_tool_use_block_serialized():
+    body = {
+        "model": "claude-3",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_123",
+                        "name": "Read",
+                        "input": {"path": "/foo.py"},
+                    }
+                ],
+            }
+        ],
+        "max_tokens": 512,
+    }
+    result = anthropic_to_openai(body, model="test")
+    assistant_msg = next(m for m in result["messages"] if m["role"] == "assistant")
+    import json
+
+    parsed = json.loads(assistant_msg["content"])
+    assert parsed["type"] == "tool_use"
+    assert parsed["name"] == "Read"
+
+
+def test_tool_result_block_serialized():
+    body = {
+        "model": "claude-3",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_123",
+                        "content": "file contents here",
+                    }
+                ],
+            }
+        ],
+        "max_tokens": 512,
+    }
+    result = anthropic_to_openai(body, model="test")
+    user_msg = next(m for m in result["messages"] if m["role"] == "user")
+    import json
+
+    parsed = json.loads(user_msg["content"])
+    assert parsed["type"] == "tool_result"
+    assert parsed["content"] == "file contents here"
+
+
+def test_top_p_passed_through():
+    body = {
+        "model": "claude-3",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 100,
+        "top_p": 0.9,
+    }
+    result = anthropic_to_openai(body, model="test")
+    assert result["top_p"] == 0.9
+
+
+def test_top_p_absent_when_not_set():
+    body = {
+        "model": "claude-3",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 100,
+    }
+    result = anthropic_to_openai(body, model="test")
+    assert "top_p" not in result
+
+
+def test_mixed_content_list_concatenated():
+    """Multiple text blocks in content list are joined."""
+    body = {
+        "model": "claude-3",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "text", "text": " world"},
+                ],
+            }
+        ],
+        "max_tokens": 100,
+    }
+    result = anthropic_to_openai(body, model="test")
+    user_msg = next(m for m in result["messages"] if m["role"] == "user")
+    assert "Hello" in user_msg["content"]
+    assert "world" in user_msg["content"]
