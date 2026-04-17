@@ -417,10 +417,51 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
     help="Upstream API format. Auto-detected from URL if not set "
     "(api.anthropic.com → anthropic, everything else → openai).",
 )
+@click.option(
+    "--repetitions",
+    "-r",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="How many times to run each task (default: 1). Each repetition is a "
+    "fresh agent invocation in its own working directory.",
+)
+@click.option(
+    "--max-concurrent",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="Maximum parallel agent subprocesses (default: 1). "
+    "--repetitions N --max-concurrent N approximates N independent developers.",
+)
+@click.option(
+    "--policy",
+    type=click.Choice(["round_robin", "sequential", "random"]),
+    default="random",
+    show_default=True,
+    help="Schedule-task ordering. 'random' is the default because it prevents "
+    "server-side prefix caches from getting a free ride by running the same "
+    "task repeatedly in a row.",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help="Seed for 'random' policy. Omit for system entropy (non-reproducible); "
+    "pass an integer to reproduce the same task order across runs.",
+)
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=1.0),
+    default=300.0,
+    show_default=True,
+    help="Per-schedule-task agent timeout in seconds.",
+)
 @click.pass_context
 def agent(
     ctx, endpoint, model, api_key, api_key_header, tasks,
     agent_cmd, proxy_port, output, upstream_api,
+    repetitions, max_concurrent, policy, seed, timeout,
 ):
     """Run full agentic benchmark through the recording proxy.
 
@@ -429,11 +470,25 @@ def agent(
     and your endpoint. The proxy records per-request timing metrics.
 
     \b
+    Scheduling model (see docs/SCHEDULING.md):
+      - Pre-generates a list of T*R schedule-tasks using --policy.
+      - J = --max-concurrent agents pull from the head of the list in
+        parallel. No batch lockstep -- when a slot frees, it grabs the
+        next item immediately.
+
+    \b
     Supports both OpenAI-compatible and Anthropic upstream endpoints:
       --upstream-api openai      → translates Anthropic → OpenAI (default)
       --upstream-api anthropic   → forwards Anthropic requests natively
+
+    \b
+    Examples:
+      asb agent -e URL -m MODEL -t p1-p10
+      asb agent -e URL -m MODEL -t p1-p10 -r 4 --max-concurrent 4
+      asb agent -e URL -m MODEL -t p1-p10 -r 4 --max-concurrent 4 --seed 42
     """
     from agentic_swarm_bench.runner.claude_code import run_agent_benchmark
+    from agentic_swarm_bench.scenarios.schedule import Schedule
 
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
@@ -446,11 +501,19 @@ def agent(
             "proxy_port": proxy_port,
             "output": output,
             "upstream_api": upstream_api,
+            "timeout": timeout,
         },
     )
 
+    sched = Schedule(
+        repetitions=repetitions,
+        max_concurrent=max_concurrent,
+        policy=policy,
+        seed=seed,
+    )
+
     _require_endpoint_model(cfg.endpoint, cfg.model)
-    asyncio.run(run_agent_benchmark(cfg, agent_cmd=agent_cmd))
+    asyncio.run(run_agent_benchmark(cfg, agent_cmd=agent_cmd, schedule=sched))
 
 
 @main.command("list-tasks")
@@ -663,6 +726,13 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     help="Task execution order: round_robin, sequential, or random (default: round_robin)",
 )
 @click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help="Seed for --policy random. Omit for system entropy (non-reproducible); "
+    "pass an integer to reproduce the same task order across runs.",
+)
+@click.option(
     "--cache-mode",
     type=click.Choice(["realistic", "allcold", "allwarm"]),
     default="realistic",
@@ -691,6 +761,7 @@ def replay(
     extra_body,
     enable_thinking,
     policy,
+    seed,
     cache_mode,
 ):
     """Replay a recorded scenario against any endpoint.
@@ -712,11 +783,12 @@ def replay(
                  can serve from KV cache freely.
 
     \b
-    Use --repetitions to run each task N times. Use --policy to control
-    execution order (round_robin, sequential, or random). Use
-    --max-concurrent to cap how many tasks run at once. N concurrent
-    independent users = --repetitions N --max-concurrent N (each
-    repetition gets a distinct poison seed).
+    Scheduling model (see docs/SCHEDULING.md):
+      - Pre-generates a list of T*R schedule-tasks using --policy.
+      - --max-concurrent J workers pull from the head of the list in
+        parallel. Each worker owns one long-lived httpx client.
+      - N concurrent independent users = --repetitions N --max-concurrent N
+        (each repetition gets a distinct poison seed).
 
     \b
     Use --slice-tokens to cap cumulative prompt tokens per task.
@@ -726,6 +798,7 @@ def replay(
       asb replay -e http://localhost:8000 -m my-model -w session.jsonl
       asb replay -e http://localhost:8000 -m my-model -w ./scenarios/my-scenario/
       asb replay -e URL -m MODEL -w scenario -r 3 --max-concurrent 5 --policy sequential
+      asb replay -e URL -m MODEL -w scenario -r 3 --policy random --seed 42
       asb replay -e URL -m MODEL -w scenario --cache-mode allwarm
     """
     from agentic_swarm_bench.scenarios.player import replay_scenario as _replay_scenario
@@ -751,6 +824,7 @@ def replay(
         repetitions=repetitions,
         max_concurrent=max_concurrent,
         policy=policy,
+        seed=seed,
     )
 
     _require_endpoint_model(cfg.endpoint, cfg.model)

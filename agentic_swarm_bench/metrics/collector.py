@@ -54,7 +54,19 @@ def is_context_length_error(error: str | None) -> bool:
 
 @dataclass
 class RequestMetrics:
-    """Timing and throughput metrics for a single streaming request."""
+    """Timing and throughput metrics for a single streaming request.
+
+    Field notes:
+        user_id:
+            In ``speed`` mode this is the concurrent synthetic-user index.
+            In ``replay`` mode this is the slot_id of the pool-of-J worker
+            that dispatched the request (see scenarios/schedule.py). Same
+            field name is kept for JSON backcompat; ``slot_id`` below is a
+            read-only alias.
+        repetition_id:
+            The 0-based execution_index within a schedule-task. Combined
+            with ``task_id`` it uniquely identifies one schedule-task.
+    """
 
     request_id: int = 0
     repetition_id: int = 0
@@ -81,6 +93,15 @@ class RequestMetrics:
     ttft_visible_ms: float = 0.0
 
     error: Optional[str] = None
+
+    @property
+    def slot_id(self) -> int:
+        """Alias for user_id when reading replay-mode metrics.
+
+        Replay dispatches via a pool of J workers; user_id carries the slot
+        index. Use this alias in new code to make intent explicit.
+        """
+        return self.user_id
 
     @property
     def succeeded(self) -> bool:

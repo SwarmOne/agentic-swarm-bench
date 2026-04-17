@@ -22,6 +22,7 @@ from agentic_swarm_bench.scenarios.registry import (
 from agentic_swarm_bench.scenarios.schedule import (
     Schedule,
     build_execution_queue,
+    run_work_queue,
 )
 
 # ---------------------------------------------------------------------------
@@ -411,6 +412,140 @@ def test_execution_queue_tracks_exec_index():
     y_indices = [ei for t, ei in queue if t.id == "y"]
     assert x_indices == [0, 1, 2, 3]
     assert y_indices == [0, 1, 2, 3]
+
+
+def test_schedule_seed_attribute_is_honored():
+    """Schedule.seed acts as a fallback when no explicit seed= is passed."""
+    tasks = [Task(id="a"), Task(id="b"), Task(id="c")]
+    sched_a = Schedule(repetitions=4, policy="random", seed=7)
+    sched_b = Schedule(repetitions=4, policy="random", seed=7)
+    q1 = [(t.id, ei) for t, ei in build_execution_queue(tasks, sched_a)]
+    q2 = [(t.id, ei) for t, ei in build_execution_queue(tasks, sched_b)]
+    assert q1 == q2
+
+
+def test_schedule_explicit_seed_overrides_attribute():
+    """Explicit seed= argument wins over Schedule.seed."""
+    tasks = [Task(id="a"), Task(id="b"), Task(id="c")]
+    sched = Schedule(repetitions=4, policy="random", seed=1)
+    q1 = [(t.id, ei) for t, ei in build_execution_queue(tasks, sched, seed=999)]
+    q2 = [(t.id, ei) for t, ei in build_execution_queue(tasks, sched, seed=999)]
+    assert q1 == q2
+    sched_default = Schedule(repetitions=4, policy="random", seed=999)
+    q3 = [(t.id, ei) for t, ei in build_execution_queue(tasks, sched_default)]
+    assert q1 == q3
+
+
+# ---------------------------------------------------------------------------
+# run_work_queue: pool of J workers pulling from head of pending
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_work_queue_empty_returns_empty():
+    results = await run_work_queue([], lambda item, slot: None, max_concurrent=4)
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_work_queue_preserves_input_order_in_results():
+    """results[i] must correspond to worker(queue[i], ...), regardless of slot."""
+    import asyncio
+
+    async def worker(item, slot_id):
+        await asyncio.sleep(0.001 * (10 - item))
+        return item * 2
+
+    out = await run_work_queue(list(range(10)), worker, max_concurrent=3)
+    assert out == [i * 2 for i in range(10)]
+
+
+@pytest.mark.asyncio
+async def test_work_queue_respects_max_concurrent():
+    """At most J workers run simultaneously."""
+    import asyncio
+
+    live = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def worker(item, slot_id):
+        nonlocal live, peak
+        async with lock:
+            live += 1
+            peak = max(peak, live)
+        await asyncio.sleep(0.01)
+        async with lock:
+            live -= 1
+        return slot_id
+
+    await run_work_queue(list(range(20)), worker, max_concurrent=4)
+    assert peak <= 4
+    assert peak >= 1
+
+
+@pytest.mark.asyncio
+async def test_work_queue_slot_ids_bounded_by_j():
+    """slot_id passed to worker is always in [0, J)."""
+
+    async def worker(item, slot_id):
+        return slot_id
+
+    slot_ids = await run_work_queue(list(range(30)), worker, max_concurrent=3)
+    assert set(slot_ids).issubset({0, 1, 2})
+
+
+@pytest.mark.asyncio
+async def test_work_queue_j_greater_than_queue_does_not_hang():
+    """If J > len(queue), excess workers must exit instead of hanging."""
+    import asyncio
+
+    async def worker(item, slot_id):
+        return item
+
+    out = await asyncio.wait_for(
+        run_work_queue([1, 2], worker, max_concurrent=10),
+        timeout=1.0,
+    )
+    assert out == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_work_queue_drains_all_items_even_if_one_is_slow():
+    """A slow item on one slot must not prevent other slots from draining the rest."""
+    import asyncio
+
+    async def worker(item, slot_id):
+        if item == 0:
+            await asyncio.sleep(0.2)
+        return item
+
+    out = await asyncio.wait_for(
+        run_work_queue(list(range(8)), worker, max_concurrent=4),
+        timeout=1.5,
+    )
+    assert out == list(range(8))
+
+
+@pytest.mark.asyncio
+async def test_work_queue_integrates_with_schedule():
+    """End-to-end: build_execution_queue -> run_work_queue with J slots."""
+    tasks = [Task(id=f"t{i}") for i in range(6)]
+    queue = build_execution_queue(
+        tasks,
+        Schedule(repetitions=8, policy="random", seed=42),
+    )
+    assert len(queue) == 48
+
+    async def worker(sched_task, slot_id):
+        task, exec_idx = sched_task
+        return (task.id, exec_idx, slot_id)
+
+    results = await run_work_queue(queue, worker, max_concurrent=4)
+    assert len(results) == 48
+    for (task, exec_idx), result in zip(queue, results):
+        assert result[:2] == (task.id, exec_idx)
+        assert 0 <= result[2] < 4
 
 
 # ---------------------------------------------------------------------------

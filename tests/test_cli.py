@@ -184,3 +184,63 @@ def test_replay_repetitions_max_concurrent_dry_run(tmp_path):
     assert result.exit_code == 0, f"dry-run failed:\n{result.output}"
     assert "DRY RUN" in result.output
     assert "Users" not in result.output
+
+
+def test_replay_seed_flag_in_help():
+    """--seed must be documented in replay --help for reproducible random order."""
+    result = RUNNER.invoke(main, ["replay", "--help"])
+    assert result.exit_code == 0
+    assert "--seed" in result.output
+
+
+def test_replay_seed_shown_in_dry_run_output(tmp_path):
+    """When --seed is passed, the dry-run summary must echo it so you can reproduce."""
+    import json
+
+    scenario = tmp_path / "scenario.jsonl"
+    scenario.write_text(
+        json.dumps({
+            "seq": 1,
+            "experiment_id": "test",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "messages": [{"role": "user", "content": "hello"}],
+            "model": "test-model",
+            "max_tokens": 100,
+            "stream": True,
+        })
+        + "\n"
+    )
+
+    result = RUNNER.invoke(
+        main,
+        [
+            "replay",
+            "--endpoint", "http://localhost:8000",
+            "--model", "test-model",
+            "--scenario", str(scenario),
+            "--repetitions", "3",
+            "--policy", "random",
+            "--seed", "42",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0, f"dry-run failed:\n{result.output}"
+    assert "seed=42" in result.output
+
+
+def test_agent_schedule_flags_in_help():
+    """agent command must expose --repetitions, --max-concurrent, --policy, --seed."""
+    result = RUNNER.invoke(main, ["agent", "--help"])
+    assert result.exit_code == 0
+    for flag in ("--repetitions", "--max-concurrent", "--policy", "--seed"):
+        assert flag in result.output, f"missing {flag} in agent --help"
+
+
+def test_agent_default_policy_is_random():
+    """Agent mode must default to random policy so cache free-rides don't happen silently."""
+    result = RUNNER.invoke(main, ["agent", "--help"])
+    assert result.exit_code == 0
+    # Click wraps the default annotation across lines, so flatten whitespace
+    # before asserting. "[default: random]" can appear as "[default:\n  random]".
+    flat = " ".join(result.output.split())
+    assert "[default: random]" in flat

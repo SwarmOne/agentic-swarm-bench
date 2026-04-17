@@ -2,6 +2,43 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [3.2.0] - 2026-04-17
+
+### Summary
+
+Makes the work-queue scheduling model explicit everywhere and plugs the two randomization holes (agent mode had none; replay's `random` policy wasn't reproducible). Both `asb replay` and `asb agent` now share one scheduler primitive: a pool of J long-lived workers that each pull the next head of a pre-ordered list of `T × R` schedule-tasks. See [docs/SCHEDULING.md](docs/SCHEDULING.md) for the full model and worked example.
+
+### Added
+
+- **`--seed` flag on `asb replay` and `asb agent`.** Pass an integer to make `--policy random` reproducible across runs; the same seed yields the same shuffled order. Omit it for system entropy. When set, the seed is echoed in the dry-run and schedule summary output so it's visible in logs.
+- **Full scheduling controls on `asb agent`.** Previously the agent command had no scheduling surface; tasks always ran sequentially, once each, one-at-a-time. Now accepts `--repetitions`, `--max-concurrent`, `--policy`, `--seed`, `--timeout` — mirroring the `replay` shape.
+- **`run_work_queue` primitive** in `agentic_swarm_bench.scenarios.schedule`. One function that both replay and agent dispatch through: literal pool of J async workers pulling from the head of a `collections.deque` until drained. Replaces the `asyncio.gather + Semaphore(J)` pattern which was semantically correct but read nothing like the work-queue model we were describing in the docs.
+- **`Schedule.seed` field.** Bundled into the dataclass so callers don't need to thread a separate seed parameter through every helper.
+- **`docs/SCHEDULING.md`** — authoritative reference for the schedule-task concept, the three orderings (sequential, round_robin, random), the pool-of-J dispatcher, and a worked example. CLI docstrings link here.
+- **Tests:** 13 new tests covering `run_work_queue` order preservation, concurrency bound, slot_id assignment, drain-despite-slow-item, J > queue_length, schedule-task round-trip, and seed reproducibility (both via argument and `Schedule.seed`).
+
+### Changed
+
+- **Agent mode defaults to `--policy random`.** A `sequential` default let server-side prefix caches get a free ride whenever two back-to-back invocations of the same agent shared tool blocks / system prompt. Random kills that by default; pass `--policy sequential` explicitly if you want the old behavior.
+- **Agent runner is now fully async.** `subprocess.run` (blocking) was replaced with `asyncio.create_subprocess_exec` so N parallel agents actually run in parallel instead of serializing through the event loop. `_start_proxy` / `_stop_proxy` follow suit.
+- **Replay dispatch uses one long-lived `httpx.AsyncClient` per slot** instead of a fresh client per schedule-task. This matches what a real user session looks like (one keepalive connection reused across many calls) and removes the TLS-handshake-per-task noise that was contaminating TTFT numbers for small schedule-tasks.
+- **Metric field clarification.** `RequestMetrics.user_id` now also carries the slot_id in replay mode (same field, refined meaning); a read-only `slot_id` property was added as an alias. JSON wire format is unchanged for backcompat.
+
+### Fixed
+
+- **Replay `--policy random` was non-reproducible.** `build_execution_queue` was called without a seed, so shuffling used system entropy and two runs with `-r 5 --policy random` would hit tasks in different orders. Pass `--seed N` now for byte-for-byte reproducible dispatch order.
+- **Agent mode always ran tasks in the same order.** `get_tasks()` returns `tasks.json` order, and the old runner iterated that list directly. Two `asb agent` invocations would replay the exact same task sequence, letting cache hit-rate inflate silently across repeat runs. Now surfaced and controllable via `--policy`.
+
+### Migration
+
+| Old                                         | New                                                              |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `asb agent -t p1-p10`                       | `asb agent -t p1-p10` (now random by default; add `--policy sequential` for old behavior) |
+| `asb agent -t p1-p10` (rerun for reps)      | `asb agent -t p1-p10 -r 4 --max-concurrent 4`                    |
+| `asb replay … --policy random`              | `asb replay … --policy random --seed N` (for reproducibility)    |
+
+---
+
 ## [3.1.0] - 2026-04-17
 
 ### Removed (breaking)
