@@ -147,15 +147,35 @@ def test_replay_users_flag_hidden_from_help():
     assert "--users" not in result.output
 
 
-def test_replay_repetitions_max_concurrent_dry_run():
-    """--repetitions + --max-concurrent (the new recipe for 'N concurrent users') works."""
+def test_replay_repetitions_max_concurrent_dry_run(tmp_path):
+    """--repetitions + --max-concurrent (the new recipe for 'N concurrent users') works.
+
+    Uses an inline scenario file so the test isn't coupled to built-in
+    scenarios that may not be shipped to CI.
+    """
+    import json
+
+    scenario = tmp_path / "scenario.jsonl"
+    scenario.write_text(
+        json.dumps({
+            "seq": 1,
+            "experiment_id": "test",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "messages": [{"role": "user", "content": "hello"}],
+            "model": "test-model",
+            "max_tokens": 100,
+            "stream": True,
+        })
+        + "\n"
+    )
+
     result = RUNNER.invoke(
         main,
         [
             "replay",
             "--endpoint", "http://localhost:8000",
             "--model", "test-model",
-            "--scenario", "markdown-note-app",
+            "--scenario", str(scenario),
             "--repetitions", "3",
             "--max-concurrent", "3",
             "--dry-run",
