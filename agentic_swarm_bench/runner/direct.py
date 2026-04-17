@@ -8,6 +8,7 @@ concurrency levels and context sizes.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import time
 from datetime import datetime, timezone
@@ -43,9 +44,15 @@ ERR_COLOR = "red"
 
 
 def _fmt_ms(ms: float) -> str:
-    """Format milliseconds into a human-friendly duration string."""
+    """Format milliseconds into a human-friendly duration string.
+
+    Sub-millisecond timings are reported as "<1ms" so the user can tell
+    "tiny but present" apart from "missing" (rendered as "-").
+    """
     if ms <= 0:
         return "-"
+    if ms < 1:
+        return "<1ms"
     if ms < 1000:
         return f"{ms:.0f}ms"
     if ms < 10_000:
@@ -80,9 +87,14 @@ async def _send_streaming_request(
     timeout: float,
     on_complete: object = None,
     on_token: object = None,
+    request_id: int = 0,
+    repetition_id: int = 0,
+    extra_body: dict | None = None,
 ) -> RequestMetrics:
     """Send a single streaming request and collect timing metrics."""
     metrics = RequestMetrics(
+        request_id=request_id,
+        repetition_id=repetition_id,
         user_id=user_id,
         task_id=task_id,
         context_profile=context_profile,
@@ -96,6 +108,8 @@ async def _send_streaming_request(
         "temperature": 0.7,
         "stream": True,
     }
+    if extra_body:
+        payload.update(extra_body)
 
     start = time.perf_counter()
     first_token_time = None
@@ -105,6 +119,7 @@ async def _send_streaming_request(
     token_count = 0
     thinking_count = 0
 
+    host_for_errors = urlparse(url).hostname or url
     try:
         async with client.stream(
             "POST",
@@ -115,7 +130,9 @@ async def _send_streaming_request(
         ) as resp:
             if resp.status_code != 200:
                 body = await resp.aread()
-                metrics.error = f"HTTP {resp.status_code}: {body.decode()[:500]}"
+                metrics.error = (
+                    f"HTTP {resp.status_code} ({host_for_errors}): {body.decode()[:500]}"
+                )
                 if on_complete:
                     on_complete()
                 return metrics
@@ -168,7 +185,13 @@ async def _send_streaming_request(
                         on_token(user_id, token_count, (now - start))
 
     except Exception as e:
-        metrics.error = f"{type(e).__name__}: {str(e)[:500]}"
+        err_text = str(e)[:500]
+        if not err_text:
+            err_text = f"no detail from {host_for_errors}"
+        elapsed = time.perf_counter() - start
+        metrics.error = (
+            f"{type(e).__name__} ({host_for_errors} after {elapsed:.1f}s): {err_text}"
+        )
         if on_complete:
             on_complete()
         return metrics
@@ -195,6 +218,19 @@ async def _send_streaming_request(
     return metrics
 
 
+class _ScenarioCancelled(Exception):
+    """Internal sentinel that carries a partial ScenarioResult out of run_scenario.
+
+    We can't just re-raise CancelledError because the outer loop would then lose
+    the partial scenario we worked hard to preserve. Carrying it on the exception
+    lets run_speed_benchmark append it to run.scenarios before bailing out.
+    """
+
+    def __init__(self, scenario):
+        super().__init__("scenario cancelled")
+        self.scenario = scenario
+
+
 async def run_scenario(
     config: BenchmarkConfig,
     url: str,
@@ -207,11 +243,21 @@ async def run_scenario(
     scenario_idx: int = 0,
     total_scenarios: int = 0,
     defeat_cache: bool = True,
+    repetitions: int = 1,
+    extra_body: dict | None = None,
+    cache_mode_label: str | None = None,
+    request_counter: "itertools.count[int] | None" = None,
 ) -> ScenarioResult:
-    """Run one benchmark scenario: N concurrent users at a given context size."""
+    """Run one benchmark scenario: N concurrent users at a given context size.
+
+    When ``repetitions > 1``, the same concurrent wave is run R times back to
+    back so percentiles are over ``num_users * repetitions`` samples while the
+    concurrency profile stays at ``num_users``.
+    """
     ctx_k = context_tokens // 1000
     user_word = "user" if num_users == 1 else "users"
-    short_label = f"{context_profile} · {ctx_k}K · {num_users} {user_word}"
+    reps_suffix = f" ×{repetitions}" if repetitions > 1 else ""
+    short_label = f"{context_profile} · {ctx_k}K · {num_users} {user_word}{reps_suffix}"
 
     if total_scenarios:
         counter = f"[{DIM}]{scenario_idx}/{total_scenarios}[/{DIM}]"
@@ -219,10 +265,11 @@ async def run_scenario(
     else:
         console.print(f"\n  [bold]─[/bold] {short_label}")
 
-    progress_label = f"{context_profile} · {ctx_k}K · {num_users}{user_word[0]}"
+    progress_label = f"{context_profile} · {ctx_k}K · {num_users}{user_word[0]}{reps_suffix}"
     task_id = None
+    total_requests = num_users * repetitions
     if progress:
-        task_id = progress.add_task(f"    {progress_label}", total=num_users)
+        task_id = progress.add_task(f"    {progress_label}", total=total_requests)
 
     token_counts: dict[int, int] = {}
     completed_count = 0
@@ -266,44 +313,84 @@ async def run_scenario(
 
         return cb
 
-    coros_args = []
-    for i in range(num_users):
-        task = tasks[i % len(tasks)]
-        prompt = task["prompt"]
-        tid = task["id"]
-        max_tok = task.get("max_output_tokens", config.max_output_tokens)
-        msgs = build_messages(
-            prompt,
-            context_tokens,
-            random_seed=None if not config.random_context else (i + time.time_ns()),
-        )
-        if defeat_cache:
-            msgs = poison_messages(msgs, seed=f"speed-{tid}-u{i}-{time.time_ns()}")
-        coros_args.append((msgs, max_tok, tid))
+    all_results: list[RequestMetrics] = []
+    wall_start = time.perf_counter()
+
+    # Shared counter keeps request_id globally monotonic across scenarios /
+    # repetitions; fall back to a fresh counter if caller didn't pass one
+    # (e.g. direct unit tests).
+    counter = request_counter if request_counter is not None else itertools.count(0)
 
     async with httpx.AsyncClient() as client:
-        coros = [
-            _send_streaming_request(
-                client=client,
-                url=url,
-                model=config.model,
-                headers=headers,
-                messages=msgs,
-                max_tokens=max_tok,
-                user_id=i,
-                task_id=tid,
-                context_profile=context_profile,
-                context_tokens=context_tokens,
-                timeout=config.timeout,
-                on_complete=make_complete_callback(),
-                on_token=make_token_callback(),
-            )
-            for i, (msgs, max_tok, tid) in enumerate(coros_args)
-        ]
+        in_flight: list[asyncio.Task[RequestMetrics]] = []
+        cancelled = False
+        try:
+            for rep in range(repetitions):
+                coros_args = []
+                for i in range(num_users):
+                    task = tasks[i % len(tasks)]
+                    prompt = task["prompt"]
+                    tid = task["id"]
+                    # CLI-provided --max-tokens caps the per-task default so users can
+                    # shrink expensive requests; both are honored via min().
+                    max_tok = min(
+                        config.max_output_tokens,
+                        task.get("max_output_tokens", config.max_output_tokens),
+                    )
+                    msgs = build_messages(
+                        prompt,
+                        context_tokens,
+                        random_seed=(
+                            None if not config.random_context else (i + rep + time.time_ns())
+                        ),
+                    )
+                    if defeat_cache:
+                        msgs = poison_messages(
+                            msgs, seed=f"speed-{tid}-u{i}-r{rep}-{time.time_ns()}"
+                        )
+                    coros_args.append((msgs, max_tok, tid))
 
-        wall_start = time.perf_counter()
-        results = await asyncio.gather(*coros)
-        wall_time = time.perf_counter() - wall_start
+                in_flight = [
+                    asyncio.create_task(
+                        _send_streaming_request(
+                            client=client,
+                            url=url,
+                            model=config.model,
+                            headers=headers,
+                            messages=msgs,
+                            max_tokens=max_tok,
+                            user_id=i,
+                            task_id=tid,
+                            context_profile=context_profile,
+                            context_tokens=context_tokens,
+                            timeout=config.timeout,
+                            on_complete=make_complete_callback(),
+                            on_token=make_token_callback(),
+                            request_id=next(counter),
+                            repetition_id=rep,
+                            extra_body=extra_body,
+                        )
+                    )
+                    for i, (msgs, max_tok, tid) in enumerate(coros_args)
+                ]
+
+                rep_results = await asyncio.gather(*in_flight)
+                all_results.extend(rep_results)
+                in_flight = []
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Preserve already-completed requests in the currently in-flight batch
+            # so Ctrl+C doesn't wipe a scenario that was 90% done.
+            cancelled = True
+            for t in in_flight:
+                if t.done() and not t.cancelled():
+                    try:
+                        all_results.append(t.result())
+                    except Exception:
+                        pass  # task raised - already counted as failure elsewhere
+                else:
+                    t.cancel()
+
+    wall_time = time.perf_counter() - wall_start
 
     if progress and task_id is not None:
         progress.remove_task(task_id)
@@ -313,11 +400,16 @@ async def run_scenario(
         context_profile=context_profile,
         context_tokens=context_tokens,
         wall_time_s=wall_time,
-        requests=list(results),
+        requests=list(all_results),
+        cache_mode=cache_mode_label,
     )
 
     stats = analyze_scenario(scenario)
     _print_scenario_stats(stats, scenario, verbose=config.verbose)
+
+    if cancelled:
+        # Let the outer loop record the (partial) scenario and stop gracefully.
+        raise _ScenarioCancelled(scenario)
     return scenario
 
 
@@ -439,6 +531,40 @@ async def _check_models_endpoint(endpoint: str, headers: dict) -> None:
         pass  # model listing unavailable - not required, skip silently
 
 
+def _raise_no_scenarios(config: BenchmarkConfig) -> None:
+    """Emit a contextual error explaining why zero scenarios resolved, then exit 2."""
+    window = config.model_context_length
+
+    if config.context_profile and config.context_profile != "realistic":
+        from agentic_swarm_bench.config import CONTEXT_PROFILES
+
+        profile_tokens = CONTEXT_PROFILES.get(config.context_profile)
+        if profile_tokens and window is not None and profile_tokens > window:
+            console.print(
+                f"[bold red]Error:[/] profile [bold]{config.context_profile}[/bold]"
+                f" (~{profile_tokens // 1000}K tokens) exceeds"
+                f" --model-context-length ({window // 1000}K).\n"
+                "  Pick a smaller --context-profile (fresh/short) or raise"
+                " --model-context-length."
+            )
+            raise SystemExit(2)
+
+    if config.suite:
+        console.print(
+            f"[bold red]Error:[/] --suite {config.suite} has no scenarios under the"
+            f" {window // 1000 if window else '?'}K model window.\n"
+            "  Raise --model-context-length or choose a smaller --suite."
+        )
+        raise SystemExit(2)
+
+    console.print(
+        "[bold red]Error:[/] No scenarios resolved.\n"
+        "  Pass --context-profile, --context-tokens, or --suite,"
+        " and ensure --model-context-length is large enough."
+    )
+    raise SystemExit(2)
+
+
 async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
     """Run the full speed benchmark across all configured scenarios."""
     tasks = get_tasks(task_range=config.task_range, tier=config.tier, tags=config.tags)
@@ -456,12 +582,7 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
 
     scenarios = config.resolved_scenarios
     if not scenarios:
-        console.print(
-            f"[bold red]Error:[/] No scenarios resolved for suite={config.suite!r} "
-            f"with model-context-length={config.model_context_length}.\n"
-            "Try a larger --model-context-length or a different --suite.",
-        )
-        raise SystemExit(1)
+        _raise_no_scenarios(config)
     cache_mode = getattr(config, "cache_mode", "allcold")
 
     max_context_tokens = max((t for _, _, t in scenarios), default=0)
@@ -495,9 +616,10 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
         skipped = [p for p, t in all_profile_tokens if t > config.model_context_length]
         header_lines.append(f"  · {config.model_context_length // 1000}K model window")
         if skipped:
+            header_lines.append("\n")
             header_lines.append(
-                f"\n[{WARN_COLOR}]Skipping profiles exceeding window: "
-                f"{', '.join(skipped)}[/{WARN_COLOR}]"
+                f"Skipping profiles exceeding window: {', '.join(skipped)}",
+                style=WARN_COLOR,
             )
 
     console.print()
@@ -521,6 +643,8 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
     total_scenario_count = len(scenarios) * len(passes)
 
     scenario_num = 0
+    request_counter = itertools.count(0)
+    interrupted = False
 
     with Progress(
         SpinnerColumn(),
@@ -531,35 +655,92 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
         console=console,
         transient=True,
     ) as progress:
-        for pass_name, defeat in passes:
-            if len(passes) > 1:
-                console.print(f"\n[bold magenta]Pass: {pass_name}[/bold magenta]")
+        try:
+            for pass_name, defeat in passes:
+                if len(passes) > 1:
+                    console.print(f"\n[bold magenta]Pass: {pass_name}[/bold magenta]")
 
-            for num_users, profile, tokens in scenarios:
-                scenario_num += 1
-                scenario = await run_scenario(
-                    config=config,
-                    url=url,
-                    headers=headers,
-                    num_users=num_users,
-                    context_tokens=tokens,
-                    context_profile=(f"{profile} ({pass_name})" if len(passes) > 1 else profile),
-                    tasks=tasks,
-                    progress=progress,
-                    scenario_idx=scenario_num,
-                    total_scenarios=total_scenario_count,
-                    defeat_cache=defeat,
-                )
-                run.scenarios.append(scenario)
-                await asyncio.sleep(2)
+                for num_users, profile, tokens in scenarios:
+                    scenario_num += 1
+                    scenario = await run_scenario(
+                        config=config,
+                        url=url,
+                        headers=headers,
+                        num_users=num_users,
+                        context_tokens=tokens,
+                        context_profile=(
+                            f"{profile} ({pass_name})" if len(passes) > 1 else profile
+                        ),
+                        tasks=tasks,
+                        progress=progress,
+                        scenario_idx=scenario_num,
+                        total_scenarios=total_scenario_count,
+                        defeat_cache=defeat,
+                        repetitions=config.repetitions,
+                        extra_body=config.extra_body,
+                        cache_mode_label=pass_name,
+                        request_counter=request_counter,
+                    )
+                    run.scenarios.append(scenario)
+                    await asyncio.sleep(2)
+        except _ScenarioCancelled as cancelled:
+            # run_scenario hit Ctrl+C mid-flight; keep whatever it salvaged.
+            run.scenarios.append(cancelled.scenario)
+            interrupted = True
+            console.print(
+                f"\n  [{WARN_COLOR}]Interrupted - saving partial results"
+                f" ({len(run.scenarios)} scenario(s) completed)[/{WARN_COLOR}]"
+            )
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            interrupted = True
+            console.print(
+                f"\n  [{WARN_COLOR}]Interrupted - saving partial results"
+                f" ({len(run.scenarios)} scenario(s) completed)[/{WARN_COLOR}]"
+            )
 
     console.print()
-    _print_summary_table(run)
+    if run.scenarios:
+        _print_summary_table(run)
+        _print_error_summary(run)
 
-    if config.output:
+    if config.output and run.scenarios:
         _save_outputs(config, run)
 
+    if interrupted:
+        raise SystemExit(130)
+    _enforce_exit_code(run)
     return run
+
+
+def _print_error_summary(run: BenchmarkRun) -> None:
+    """Print a compact per-error-kind tally (connect refused, DNS, 401, etc).
+
+    Keeps connection/DNS/auth/timeout failures visible to the user even when
+    the scenario table only shows a FAIL row.
+    """
+    counts: dict[str, int] = {}
+    for scenario in run.scenarios:
+        for r in scenario.failures:
+            if not r.error:
+                continue
+            first = r.error.split(":", 1)[0].strip()
+            counts[first] = counts.get(first, 0) + 1
+    if not counts:
+        return
+    parts = [f"{kind} × {n}" for kind, n in sorted(counts.items())]
+    console.print(f"\n  [{WARN_COLOR}]Errors: {'; '.join(parts)}[/{WARN_COLOR}]")
+
+
+def _enforce_exit_code(run: BenchmarkRun) -> None:
+    """Exit non-zero when no scenario produced any successes.
+
+    CI pipelines rely on the exit code to detect a bad run.
+    """
+    if not run.scenarios:
+        return
+    any_success = any(len(s.successes) > 0 for s in run.scenarios)
+    if not any_success:
+        raise SystemExit(1)
 
 
 def _print_dry_run(

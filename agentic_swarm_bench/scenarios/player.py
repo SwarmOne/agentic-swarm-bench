@@ -77,6 +77,7 @@ async def _replay_one_request(
     user_id: int = 0,
     on_complete=None,
     max_retries: int = 0,
+    extra_body: dict | None = None,
 ) -> RequestMetrics:
     """Replay a single recorded request and collect timing metrics."""
     metrics = RequestMetrics(
@@ -96,6 +97,8 @@ async def _replay_one_request(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if extra_body:
+        payload.update(extra_body)
 
     usage_completion_tokens: int | None = None
     drop_stream_options = False
@@ -244,6 +247,19 @@ def _bucket_label(tokens: int) -> str:
     return "xxl"
 
 
+def _entry_prompt_tokens(entry: RecordingEntry) -> int:
+    """Best-effort prompt-token size for an entry.
+
+    Recordings sometimes store tiny or missing ``prompt_tokens`` values when the
+    upstream didn't emit usage on the stream. Using the raw field alone
+    underestimates size and defeats the slice budget. Take the max of the
+    recorded value and a char-based estimate so budgets always hold.
+    """
+    recorded = entry.prompt_tokens or 0
+    estimated = sum(len(m.get("content", "")) for m in entry.messages) // 4
+    return max(recorded, estimated)
+
+
 def _slice_entries(
     entries: list[RecordingEntry],
     slice_tokens: int | None,
@@ -255,16 +271,25 @@ def _slice_entries(
     kept: list[RecordingEntry] = []
     cumulative = 0
     for entry in entries:
-        tok = (
-            entry.prompt_tokens
-            if entry.prompt_tokens
-            else (sum(len(m.get("content", "")) for m in entry.messages) // 4)
-        )
+        tok = _entry_prompt_tokens(entry)
         if cumulative + tok > slice_tokens and kept:
             break
         cumulative += tok
         kept.append(entry)
     return kept
+
+
+def _apply_slice_to_tasks(
+    tasks: list[Task],
+    slice_tokens: int | None,
+) -> list[Task]:
+    """Return a new task list whose entries are capped at slice_tokens each."""
+    if slice_tokens is None:
+        return tasks
+    return [
+        Task(id=t.id, name=t.name, entries=_slice_entries(t.entries, slice_tokens))
+        for t in tasks
+    ]
 
 
 def _compute_bucket_wall_time(requests: list[RequestMetrics]) -> float:
@@ -286,6 +311,7 @@ async def _replay_task_entries(
     user_id: int,
     on_complete=None,
     model_context_length: int | None = None,
+    extra_body: dict | None = None,
 ) -> list[RequestMetrics]:
     """Replay one task's entries sequentially, returning all metrics."""
     results: list[RequestMetrics] = []
@@ -309,6 +335,7 @@ async def _replay_task_entries(
             timeout=timeout,
             user_id=user_id,
             on_complete=on_complete,
+            extra_body=extra_body,
         )
         m.context_profile = _bucket_label(tokens)
         m.context_tokens = tokens
@@ -324,6 +351,7 @@ async def replay_scenario(
     model_context_length: int | None = None,
     schedule: Schedule | None = None,
     cache_mode: str = "realistic",
+    extra_body: dict | None = None,
 ) -> BenchmarkRun:
     """Replay a recorded scenario against the configured endpoint.
 
@@ -340,10 +368,11 @@ async def replay_scenario(
     url = resolve_endpoint(config.endpoint)
     headers = _build_headers(config)
 
-    raw_queue = build_execution_queue(scenario.tasks, schedule)
+    sliced_tasks = _apply_slice_to_tasks(scenario.tasks, slice_tokens)
+    raw_queue = build_execution_queue(sliced_tasks, schedule)
 
     if cache_mode == "realistic":
-        lcp_len = compute_scenario_lcp(scenario.tasks)
+        lcp_len = compute_scenario_lcp(sliced_tasks)
         execution_queue = [
             (poison_task_execution(task, lcp_len, exec_idx), exec_idx)
             for task, exec_idx in raw_queue
@@ -400,21 +429,18 @@ async def replay_scenario(
 
     async def _run_one_task(task: Task, task_idx: int) -> list[RequestMetrics]:
         async with semaphore:
-            entries = task.entries
-            if slice_tokens is not None:
-                entries = _slice_entries(entries, slice_tokens)
-
             async with httpx.AsyncClient() as client:
                 return await _replay_task_entries(
                     client=client,
                     url=url,
                     model_override=config.model,
                     headers=headers,
-                    entries=entries,
+                    entries=task.entries,
                     timeout=config.timeout,
                     user_id=task_idx,
                     on_complete=lambda: progress.advance(progress_task_id),
                     model_context_length=model_context_length,
+                    extra_body=extra_body,
                 )
 
     total_progress = total_entries
@@ -457,6 +483,7 @@ async def replay_scenario(
             context_tokens=max_ctx,
             wall_time_s=_compute_bucket_wall_time(results),
             requests=results,
+            cache_mode=cache_mode,
         )
         run.scenarios.append(scenario_result)
 

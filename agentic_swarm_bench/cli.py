@@ -85,6 +85,37 @@ def _reject_users_flag(value):
     )
 
 
+def _merge_extra_body(extra_body_json: str | None, enable_thinking: bool) -> dict | None:
+    """Parse --extra-body JSON and merge with --enable-thinking convenience flag.
+
+    Returns ``None`` when neither is set so we don't put an empty dict in the
+    request payload.
+    """
+    import json as _json
+
+    out: dict = {}
+    if extra_body_json:
+        try:
+            parsed = _json.loads(extra_body_json)
+        except _json.JSONDecodeError as e:
+            raise click.UsageError(f"--extra-body is not valid JSON: {e}") from e
+        if not isinstance(parsed, dict):
+            raise click.UsageError("--extra-body must be a JSON object")
+        out.update(parsed)
+
+    if enable_thinking:
+        existing = out.get("chat_template_kwargs") or {}
+        if not isinstance(existing, dict):
+            raise click.UsageError(
+                "--extra-body.chat_template_kwargs must be an object to "
+                "combine with --enable-thinking"
+            )
+        existing["enable_thinking"] = True
+        out["chat_template_kwargs"] = existing
+
+    return out or None
+
+
 def _require_endpoint_model(cfg_endpoint: str, cfg_model: str) -> None:
     """Raise a clear UsageError if endpoint or model are still unset after config resolution."""
     if not cfg_endpoint:
@@ -113,12 +144,15 @@ def main(ctx, config):
 
     \b
     Modes:
-      speed      - Measure inference speed (TTFT, tok/s, ITL, prefill)
-      eval       - Evaluate code correctness (syntax, execution, functional)
-      agent      - Full agentic session benchmark through recording proxy
-      report     - Generate reports from saved results
-      compare    - Compare two benchmark runs side by side
-      list-tasks - Show available tasks and tiers
+      speed          - Measure inference speed (TTFT, tok/s, ITL, prefill)
+      eval           - Evaluate code correctness (syntax, execution, functional)
+      agent          - Full agentic session benchmark through recording proxy
+      record         - Record a real coding session as a replayable JSONL
+      replay         - Replay a recorded scenario against any endpoint
+      report         - Generate reports from saved results
+      compare        - Compare two benchmark runs side by side
+      list-tasks     - Show available tasks and tiers
+      list-scenarios - Show available built-in scenarios
 
     \b
     Endpoint URL:
@@ -151,10 +185,16 @@ def main(ctx, config):
     type=click.Choice(list(SUITE_CONFIGS.keys())),
     help="Predefined suite: quick (6K), standard (40-70K), or full (6K-100K)",
 )
-@click.option("--users", "-u", type=int, default=None, help="Number of concurrent users")
+@click.option(
+    "--users",
+    "-u",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Number of concurrent users (must be >= 1)",
+)
 @click.option(
     "--max-users",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Cap max concurrent users (filters suite user lists)",
 )
@@ -166,21 +206,37 @@ def main(ctx, config):
     help="Context size profile: fresh=6K, short=20K, medium=40K, long=70K, "
     "full=100K, xl=200K, xxl=400K (default: realistic = sweep 6K-100K)",
 )
-@click.option("--context-tokens", "-c", type=int, default=None, help="Exact context size in tokens")
+@click.option(
+    "--context-tokens",
+    "-c",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Exact context size in tokens",
+)
 @click.option(
     "--tasks",
     "-t",
     default=None,
     help="Task range: p1-p25, p51-p75, trivial, expert, etc.",
 )
-@click.option("--max-tokens", type=int, default=512, help="Max output tokens per request")
+@click.option(
+    "--max-tokens",
+    type=click.IntRange(min=1),
+    default=512,
+    help="Max output tokens per request (CLI value overrides per-task defaults)",
+)
 @click.option(
     "--cache-mode",
     type=click.Choice(["allcold", "allwarm", "realistic"]),
     default=None,
     help="Cache mode: allcold (defeat cache), allwarm (allow cache), realistic (both passes)",
 )
-@click.option("--timeout", type=float, default=300.0, help="Request timeout in seconds")
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.1),
+    default=300.0,
+    help="Request timeout in seconds",
+)
 @click.option("--output", "-o", default=None, help="Save results to file (.md or .json)")
 @click.option(
     "--format",
@@ -189,14 +245,38 @@ def main(ctx, config):
     default="markdown",
     help="Output format: markdown (default, also saves .json), json (only .json)",
 )
-@click.option("--repetitions", "-r", type=int, default=1, help="Repetitions per scenario")
+@click.option(
+    "--repetitions",
+    "-r",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Repetitions per scenario (total samples = users × repetitions)",
+)
 @click.option("--random-context", is_flag=True, help="Randomize context per request")
 @click.option("--dry-run", is_flag=True, help="Show what would run without sending requests")
 @click.option(
     "--model-context-length",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Model's max context window in tokens. Skips any scenarios that exceed it.",
+)
+@click.option(
+    "--extra-body",
+    default=None,
+    help=(
+        "JSON merged into each request body. Use to pass vendor-specific fields "
+        "like chat_template_kwargs.enable_thinking=true for vLLM-served Qwen/DeepSeek."
+    ),
+)
+@click.option(
+    "--enable-thinking",
+    is_flag=True,
+    default=False,
+    help=(
+        "Shortcut for --extra-body "
+        "'{\"chat_template_kwargs\":{\"enable_thinking\":true}}'. "
+        "Merged with --extra-body if both are given."
+    ),
 )
 @click.option("--verbose", "-V", is_flag=True, help="Show live progress and per-request details")
 @click.pass_context
@@ -221,6 +301,8 @@ def speed(
     random_context,
     dry_run,
     model_context_length,
+    extra_body,
+    enable_thinking,
     verbose,
 ):
     """Benchmark inference speed against any OpenAI-compatible endpoint.
@@ -234,6 +316,8 @@ def speed(
       asb speed -e http://localhost:8000 -m my-model --format json -o results.json
     """
     from agentic_swarm_bench.runner.direct import run_speed_benchmark
+
+    merged_extra = _merge_extra_body(extra_body, enable_thinking)
 
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
@@ -258,6 +342,7 @@ def speed(
             "random_context": random_context or None,
             "dry_run": dry_run or None,
             "verbose": verbose or None,
+            "extra_body": merged_extra,
         },
     )
 
@@ -512,10 +597,15 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     help="Scenario path: directory with scenario.json, single .jsonl, or built-in name",
 )
 @click.option("--output", "-o", default=None, help="Save results to file (.md or .json)")
-@click.option("--timeout", type=float, default=300.0, help="Request timeout in seconds")
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.1),
+    default=300.0,
+    help="Request timeout in seconds",
+)
 @click.option(
     "--slice-tokens",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Replay until cumulative prompt tokens exceed N per task",
 )
@@ -532,22 +622,39 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 )
 @click.option(
     "--model-context-length",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Model's max context window in tokens. Skips requests whose prompt exceeds it.",
 )
 @click.option(
     "--repetitions",
     "-r",
-    type=int,
+    type=click.IntRange(min=1),
     default=1,
     help="How many times to run each task (default: 1)",
 )
 @click.option(
     "--max-concurrent",
-    type=int,
+    type=click.IntRange(min=1),
     default=10,
     help="Maximum tasks executing simultaneously (default: 10)",
+)
+@click.option(
+    "--extra-body",
+    default=None,
+    help=(
+        "JSON merged into each request body. Use to pass vendor-specific fields "
+        "like chat_template_kwargs.enable_thinking=true."
+    ),
+)
+@click.option(
+    "--enable-thinking",
+    is_flag=True,
+    default=False,
+    help=(
+        "Shortcut for --extra-body "
+        "'{\"chat_template_kwargs\":{\"enable_thinking\":true}}'."
+    ),
 )
 @click.option(
     "--policy",
@@ -581,6 +688,8 @@ def replay(
     model_context_length,
     repetitions,
     max_concurrent,
+    extra_body,
+    enable_thinking,
     policy,
     cache_mode,
 ):
@@ -622,6 +731,8 @@ def replay(
     from agentic_swarm_bench.scenarios.player import replay_scenario as _replay_scenario
     from agentic_swarm_bench.scenarios.schedule import Schedule
 
+    merged_extra = _merge_extra_body(extra_body, enable_thinking)
+
     cfg = build_config(
         config_file=ctx.obj.get("config_file"),
         cli_args={
@@ -632,6 +743,7 @@ def replay(
             "output": output,
             "timeout": timeout,
             "dry_run": dry_run or None,
+            "extra_body": merged_extra,
         },
     )
 
@@ -650,6 +762,7 @@ def replay(
             model_context_length=model_context_length,
             schedule=sched,
             cache_mode=cache_mode,
+            extra_body=merged_extra,
         )
     )
 

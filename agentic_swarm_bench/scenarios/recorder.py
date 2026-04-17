@@ -37,6 +37,25 @@ except ImportError:
 from agentic_swarm_bench.proxy.utils import _detect_upstream_api
 
 
+_UPSTREAM_SUFFIXES = ("/v1/chat/completions", "/v1/messages")
+
+
+def _normalize_recorder_upstream(url: str) -> str:
+    """Strip a trailing API path from the configured upstream.
+
+    ``asb record`` accepts either a bare root (``https://host/prefix``) or a
+    full chat/completions URL (``https://host/prefix/v1/chat/completions``).
+    The agent sending requests to the recorder will include its own
+    ``/v1/chat/completions`` (or ``/v1/messages``) in the path, so any suffix
+    already on the upstream would be appended twice. Normalise to a bare root.
+    """
+    trimmed = url.rstrip("/")
+    for suffix in _UPSTREAM_SUFFIXES:
+        if trimmed.endswith(suffix):
+            return trimmed[: -len(suffix)]
+    return trimmed
+
+
 def create_recording_app(
     upstream_url: str,
     model: str,
@@ -57,6 +76,7 @@ def create_recording_app(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     is_anthropic_upstream = _detect_upstream_api(upstream_url, upstream_api) == "anthropic"
+    upstream_base = _normalize_recorder_upstream(upstream_url)
 
     state = {
         "experiment_id": uuid.uuid4().hex[:12],
@@ -75,10 +95,9 @@ def create_recording_app(
         return headers
 
     def _resolve_upstream(path: str) -> str:
-        base = upstream_url.rstrip("/")
-        if path.startswith("/"):
-            return base + path
-        return base + "/" + path
+        base = upstream_base
+        normalized = path.lstrip("/")
+        return f"{base}/{normalized}" if normalized else base
 
     def _write_entry(entry: dict) -> None:
         with open(out_path, "a") as f:
@@ -354,6 +373,8 @@ def create_recording_app(
             token_count = 0
             first_time = None
             last_time = None
+            upstream_status = None
+            upstream_error: str | None = None
 
             if is_messages_api:
                 from agentic_swarm_bench.proxy.translators import make_anthropic_stream_events
@@ -367,6 +388,27 @@ def create_recording_app(
                 async with client.stream(
                     "POST", target_url, json=oai_body, headers=headers
                 ) as resp:
+                    upstream_status = resp.status_code
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        upstream_error = body.decode(errors="replace")[:500]
+                        err_payload = {
+                            "error": {
+                                "type": f"upstream_http_{resp.status_code}",
+                                "message": (
+                                    f"Upstream {target_url} returned "
+                                    f"HTTP {resp.status_code}: {upstream_error}"
+                                ),
+                            }
+                        }
+                        yield f"data: {json.dumps(err_payload)}\n\n".encode()
+                        yield b"data: [DONE]\n\n"
+                        entry["status_code"] = resp.status_code
+                        entry["error"] = upstream_error
+                        entry["total_time_s"] = round(time.perf_counter() - t_start, 3)
+                        _write_entry(entry)
+                        return
+
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue
@@ -421,6 +463,8 @@ def create_recording_app(
             entry["ttft_ms"] = round(ttft, 2) if ttft else None
             entry["total_time_s"] = round(t_end - t_start, 3)
             entry["completion_tokens"] = token_count
+            if upstream_status is not None:
+                entry["status_code"] = upstream_status
 
             if first_time and last_time and token_count > 1:
                 decode_time = last_time - first_time
@@ -474,7 +518,10 @@ def run_recorder(
     if not HAS_FASTAPI:
         raise ImportError("Install proxy deps: pip install agentic-swarm-bench[proxy]")
 
+    _precheck_port(port)
+
     detected_api = _detect_upstream_api(upstream_url, upstream_api)
+    effective_upstream = _normalize_recorder_upstream(upstream_url)
 
     app = create_recording_app(
         upstream_url=upstream_url,
@@ -484,7 +531,7 @@ def run_recorder(
         output_file=output_file,
         upstream_api=upstream_api,
     )
-    print(f"\nagentic-swarm-bench recorder on :{port} -> {upstream_url}")
+    print(f"\nagentic-swarm-bench recorder on :{port} -> {effective_upstream}")
     print(f"  Model: {model}")
     print(f"  Upstream API: {detected_api}")
     print(f"  Output: {output_file}")
@@ -500,3 +547,28 @@ def run_recorder(
     print()
     print("  Press Ctrl+C to stop recording.\n")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+
+
+def _precheck_port(port: int) -> None:
+    """Exit early with a clear error if the requested port is already bound.
+
+    Avoids printing the "Point your agent at localhost:PORT" banner before
+    uvicorn fails to bind - otherwise users paste a port that belongs to a
+    different recorder.
+    """
+    import socket
+    import sys
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("0.0.0.0", port))
+    except OSError as e:
+        print(
+            f"ERROR: cannot bind recorder to :{port} ({e}). "
+            "Stop the other process or pass a different --port.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from e
+    finally:
+        sock.close()
