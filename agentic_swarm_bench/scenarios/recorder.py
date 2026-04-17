@@ -36,7 +36,6 @@ except ImportError:
 
 from agentic_swarm_bench.proxy.utils import _detect_upstream_api
 
-
 _UPSTREAM_SUFFIXES = ("/v1/chat/completions", "/v1/messages")
 
 
