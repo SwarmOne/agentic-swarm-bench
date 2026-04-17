@@ -392,7 +392,7 @@ def _print_results(
     for col in ["Count", "Min", "Mean", "Median", "P95", "Max"]:
         table.add_column(col, justify="right")
 
-    for label, data in [("TTFT (ms)", ttft), ("Tok/s", tps), ("Prefill tok/s", prefill)]:
+    for label, data in [("TTFT (ms)", ttft), ("Decode tok/s", tps), ("Prefill tok/s", prefill)]:
         if not data:
             continue
         table.add_row(

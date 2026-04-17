@@ -439,7 +439,13 @@ def _print_scenario_stats(
 
     ok_str = f"[{OK_COLOR}]✓ {stats.successful}/{stats.total_requests}[/{OK_COLOR}]"
 
-    tok_s = f"[bold {ACCENT}]{stats.tok_per_sec.median:.1f}[/bold {ACCENT}] tok/s"
+    tok_s = f"[bold {ACCENT}]{stats.tok_per_sec.median:.1f}[/bold {ACCENT}] decode tok/s"
+
+    prefill_str = (
+        f"[{DIM}]prefill {stats.prefill_tok_per_sec.median:.0f} tok/s[/{DIM}]"
+        if stats.prefill_tok_per_sec.count > 0
+        else ""
+    )
 
     ttft_p50 = _fmt_ms(stats.ttft_ms.median)
     ttft_p99 = _fmt_ms(stats.ttft_ms.p99)
@@ -452,7 +458,11 @@ def _print_scenario_stats(
 
     agg_str = f"[{DIM}]Σ {stats.aggregate_tok_per_sec:.0f} tok/s[/{DIM}]"
 
-    console.print(f"    {ok_str}   {tok_s}   {ttft_str}   {itl_str}   {agg_str}")
+    parts = [ok_str, tok_s]
+    if prefill_str:
+        parts.append(prefill_str)
+    parts.extend([ttft_str, itl_str, agg_str])
+    console.print(f"    {'   '.join(parts)}")
 
     if stats.has_thinking:
         overhead = stats.thinking_overhead_ms
@@ -866,7 +876,8 @@ def _print_summary_table(run: BenchmarkRun) -> None:
     table.add_column("", justify="center", width=1, no_wrap=True)
     table.add_column("Users", justify="right", style=DIM)
     table.add_column("Context", justify="left")
-    table.add_column("Tok/s", justify="right", style=f"bold {ACCENT}")
+    table.add_column("Decode", justify="right", style=f"bold {ACCENT}")
+    table.add_column("Prefill", justify="right")
     table.add_column("TTFT p50", justify="right")
     table.add_column("TTFT p99", justify="right", style=DIM)
     table.add_column("ITL", justify="right")
@@ -883,6 +894,7 @@ def _print_summary_table(run: BenchmarkRun) -> None:
                 str(stats.num_users),
                 stats.context_profile,
                 f"[{ERR_COLOR}]FAIL[/{ERR_COLOR}]",
+                "-",
                 "-",
                 "-",
                 "-",
@@ -907,11 +919,18 @@ def _print_summary_table(run: BenchmarkRun) -> None:
             else f"{stats.successful}/{stats.total_requests}"
         )
 
+        prefill_str = (
+            f"{stats.prefill_tok_per_sec.median:.0f}"
+            if stats.prefill_tok_per_sec.count > 0
+            else "-"
+        )
+
         table.add_row(
             f"[{dot_color}]●[/{dot_color}]",
             str(stats.num_users),
             stats.context_profile,
             f"{stats.tok_per_sec.median:.1f}",
+            prefill_str,
             _fmt_ms(stats.ttft_ms.median),
             _fmt_ms(stats.ttft_ms.p99),
             _fmt_ms(stats.itl_ms.median),

@@ -144,9 +144,14 @@ def _verdict_section(all_stats: list[tuple]) -> str:
         f"> {icon} **{label}** at `{best.context_profile}` context with {best.num_users} user(s)"
     )
     lines.append(">")
+    prefill_part = (
+        f" · **{best.prefill_tok_per_sec.median:.0f}** prefill tok/s"
+        if best.prefill_tok_per_sec.count > 0
+        else ""
+    )
     lines.append(
         f"> **{_fmt_ms(best.ttft_ms.median)} ms** first token · "
-        f"**{best.tok_per_sec.median:.1f}** tok/s/user · "
+        f"**{best.tok_per_sec.median:.1f}** decode tok/s/user{prefill_part} · "
         f"**{best.aggregate_tok_per_sec:.0f}** tok/s aggregate\n"
     )
 
@@ -276,11 +281,13 @@ def _experience_label(ttft: float, toks: float) -> str:
 
 def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
     header = (
-        "| | Users | Context | Avg prompt | Tok/s (med) | TTFT p50 | TTFT p99 "
+        "| | Users | Context | Avg prompt | Decode tok/s | Prefill tok/s "
+        "| TTFT p50 | TTFT p99 "
         "| ITL p50 | Agg tok/s | Output tok | Completed | Experience |"
     )
     sep = (
-        "|:-:|------:|--------:|-----------:|------------:|---------:|---------:"
+        "|:-:|------:|--------:|-----------:|-------------:|--------------:"
+        "|---------:|---------:"
         "|--------:|----------:|-----------:|----------:|------------|"
     )
     lines = ["## Results\n", header, sep]
@@ -289,7 +296,7 @@ def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
         if stats.successful == 0:
             lines.append(
                 f"| {_grade_icon('poor')} | {stats.num_users} | {stats.context_profile} "
-                f"| - | FAIL | - | - | - | - | - "
+                f"| - | FAIL | - | - | - | - | - | - "
                 f"| 0/{stats.total_requests} | - |"
             )
             continue
@@ -297,10 +304,16 @@ def _summary_table(run: BenchmarkRun, all_stats: list[tuple]) -> str:
         verdict = _verdict_for_stats(stats)
         prompt_str = _fmt_tokens(stats.avg_prompt_tokens)
         experience = _experience_label(stats.ttft_ms.median, stats.tok_per_sec.median)
+        prefill_str = (
+            f"{stats.prefill_tok_per_sec.median:.0f}"
+            if stats.prefill_tok_per_sec.count > 0
+            else "-"
+        )
         lines.append(
             f"| {_grade_icon(verdict)} | {stats.num_users} | {stats.context_profile} | "
             f"{prompt_str} | "
             f"**{stats.tok_per_sec.median:.1f}** | "
+            f"{prefill_str} | "
             f"{_fmt_ms(stats.ttft_ms.median)} ms | "
             f"{_fmt_ms(stats.ttft_ms.p99)} ms | "
             f"{stats.itl_ms.median:.1f} ms | "
@@ -351,7 +364,7 @@ def _context_scaling_section(all_stats: list[tuple]) -> str:
         lines.append(f"{profile:<10} {ttft:>7.0f}ms  {ttft_bar}  {toks:>6.1f}  {toks_bar}")
 
     lines.append("```\n")
-    lines.append("▓ = TTFT (lower is better) · █ = Tok/s/user (higher is better)\n")
+    lines.append("▓ = TTFT (lower is better) · █ = Decode tok/s/user (higher is better)\n")
     return "\n".join(lines)
 
 
@@ -396,8 +409,8 @@ def _concurrency_scaling_section(all_stats: list[tuple]) -> str:
 
     for profile, rows in sections_with_data:
         lines.append(f"### `{profile}` context\n")
-        lines.append("| Users | Tok/s/user | Agg tok/s | Efficiency |")
-        lines.append("|------:|-----------:|----------:|-----------:|")
+        lines.append("| Users | Decode tok/s | Agg tok/s | Efficiency |")
+        lines.append("|------:|-------------:|----------:|-----------:|")
 
         for n_users, tps, agg, eff in rows:
             eff_icon = _grade_icon(_grade(eff, 80, 50, lower_is_better=False))
@@ -448,10 +461,10 @@ def _methodology_section(run: BenchmarkRun) -> str:
         "### What was measured\n",
         "| Term | Meaning |",
         "|------|---------|",
-        "| **TTFT** | Time To First Token - latency before first output |",
-        "| **Tok/s/user** | Decode throughput per user |",
+        "| **TTFT** | Time To First Token - latency before first output (prefill phase) |",
+        "| **Decode tok/s** | Output token throughput per user (after first token arrives) |",
+        "| **Prefill tok/s** | Input token processing rate during TTFT (prompt_tokens / TTFT) |",
         "| **ITL** | Inter-Token Latency - time between consecutive tokens |",
-        "| **Prefill tok/s** | Input token processing rate during TTFT |",
         "| **Agg tok/s** | Aggregate throughput across all concurrent users |",
         "| **TTFT (thinking)** | Time to first *reasoning* token (R1, o3) |",
         "| **TTFT (visible)** | Time to first *visible* output token |",
@@ -541,8 +554,8 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
 
     lines.extend(
         [
-            "### Head-to-Head\n",
-            "| | Users | Context | Baseline tok/s | Candidate tok/s | Delta |",
+            "### Head-to-Head (Decode tok/s)\n",
+            "| | Users | Context | Baseline decode | Candidate decode | Delta |",
             "|:-:|------:|--------:|---------------:|----------------:|------:|",
         ]
     )

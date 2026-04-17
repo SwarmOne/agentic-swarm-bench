@@ -547,9 +547,15 @@ def _print_bucket_stats(
             console.print("         [yellow]↳ prompt exceeded model's context window[/yellow]")
         return
 
+    prefill_str = (
+        f"prefill: {stats.prefill_tok_per_sec.median:.0f} tok/s | "
+        if stats.prefill_tok_per_sec.count > 0
+        else ""
+    )
     console.print(
         f"\n  {label}: {stats.successful}/{stats.total_requests} ok | "
-        f"tok/s: [bold cyan]{stats.tok_per_sec.median:.1f}[/bold cyan] | "
+        f"decode: [bold cyan]{stats.tok_per_sec.median:.1f}[/bold cyan] tok/s | "
+        f"{prefill_str}"
         f"TTFT: {stats.ttft_ms.median:.0f}ms p50 | "
         f"Agg: {stats.aggregate_tok_per_sec:.0f} tok/s"
     )
@@ -572,7 +578,8 @@ def _print_replay_summary(run: BenchmarkRun, scenario: Scenario) -> None:
     table = Table(title=title)
     table.add_column("Context", justify="right")
     table.add_column("Requests", justify="right")
-    table.add_column("Tok/s", justify="right")
+    table.add_column("Decode tok/s", justify="right")
+    table.add_column("Prefill tok/s", justify="right")
     table.add_column("TTFT p50", justify="right")
     table.add_column("OK", justify="right")
 
@@ -584,13 +591,20 @@ def _print_replay_summary(run: BenchmarkRun, scenario: Scenario) -> None:
                 str(stats.total_requests),
                 "[red]FAIL[/red]",
                 "-",
+                "-",
                 f"0/{stats.total_requests}",
             )
         else:
+            prefill_str = (
+                f"{stats.prefill_tok_per_sec.median:.0f}"
+                if stats.prefill_tok_per_sec.count > 0
+                else "-"
+            )
             table.add_row(
                 stats.context_profile,
                 str(stats.total_requests),
                 f"{stats.tok_per_sec.median:.1f}",
+                prefill_str,
                 f"{stats.ttft_ms.median:.0f}ms",
                 f"{stats.successful}/{stats.total_requests}",
             )
