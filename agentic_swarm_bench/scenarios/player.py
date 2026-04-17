@@ -4,9 +4,16 @@ Takes a scenario (directory with manifest or single JSONL) and replays
 each task's requests against a target endpoint, collecting the same
 metrics as ``asb speed``.
 
-With a Schedule, tasks from the scenario are ordered (round_robin,
-sequential, or random), repeated N times, and executed with capped
-concurrency via an asyncio semaphore.
+Scheduling model (see docs/SCHEDULING.md):
+  - A scenario has T tasks; each replay runs every task R times.
+  - That yields T*R schedule-tasks. One schedule-task is one (task,
+    execution_index) pair with its recorded r_1..r_n request entries.
+  - A Schedule (R, J, policy, seed) pre-generates the ordered list L of
+    all T*R schedule-tasks.
+  - Dispatch is a literal pool of J long-lived workers, each owning one
+    persistent httpx.AsyncClient and pulling the next head of L whenever
+    it finishes its current schedule-task. No worker ever stalls waiting
+    for a batch peer. This is what a real production load looks like.
 
 Cache modes:
   realistic  Poison only the non-shared portion of each request. The LCP
@@ -21,6 +28,7 @@ Cache modes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from datetime import datetime, timezone
@@ -45,7 +53,11 @@ from agentic_swarm_bench.scenarios.registry import (
     Task,
     get_scenario,
 )
-from agentic_swarm_bench.scenarios.schedule import Schedule, build_execution_queue
+from agentic_swarm_bench.scenarios.schedule import (
+    Schedule,
+    build_execution_queue,
+    run_work_queue,
+)
 
 console = Console()
 
@@ -293,12 +305,18 @@ def _apply_slice_to_tasks(
 
 
 def _compute_bucket_wall_time(requests: list[RequestMetrics]) -> float:
-    by_user: dict[int, float] = {}
+    """Wall time = max time any single slot spent on this bucket.
+
+    We group by slot_id (stored in the ``user_id`` field for backcompat),
+    sum each slot's total_time_s, and take the max. That captures the
+    slowest concurrent worker, which is what actually bounds the run.
+    """
+    by_slot: dict[int, float] = {}
     for r in requests:
-        by_user[r.user_id] = by_user.get(r.user_id, 0.0) + r.total_time_s
-    if not by_user:
+        by_slot[r.user_id] = by_slot.get(r.user_id, 0.0) + r.total_time_s
+    if not by_slot:
         return 0.0
-    return max(by_user.values())
+    return max(by_slot.values())
 
 
 async def _replay_task_entries(
@@ -370,6 +388,9 @@ async def replay_scenario(
 
     sliced_tasks = _apply_slice_to_tasks(scenario.tasks, slice_tokens)
     raw_queue = build_execution_queue(sliced_tasks, schedule)
+    # poison_task_execution uses (task.id, execution_index) for its RNG seed, so
+    # poison output is stable regardless of queue order. Shuffling later is
+    # purely about dispatch order, not about which bytes get sent.
 
     if cache_mode == "realistic":
         lcp_len = compute_scenario_lcp(sliced_tasks)
@@ -396,11 +417,7 @@ async def replay_scenario(
         f" ({len(scenario.tasks)} task(s), {scenario.total_requests} requests)"
     )
     if total_task_executions != len(scenario.tasks):
-        console.print(
-            f"  Schedule: {schedule.policy}"
-            f" × {schedule.repetitions} reps"
-            f" (max {schedule.max_concurrent} concurrent)"
-        )
+        console.print(_schedule_line(schedule))
         console.print(f"  Total executions: {total_task_executions} tasks")
     cache_mode_labels = {
         "realistic": "[yellow]realistic[/yellow] (shared prefix cached, unique context poisoned)",
@@ -425,25 +442,12 @@ async def replay_scenario(
         started_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    semaphore = asyncio.Semaphore(schedule.max_concurrent)
-
-    async def _run_one_task(task: Task, task_idx: int) -> list[RequestMetrics]:
-        async with semaphore:
-            async with httpx.AsyncClient() as client:
-                return await _replay_task_entries(
-                    client=client,
-                    url=url,
-                    model_override=config.model,
-                    headers=headers,
-                    entries=task.entries,
-                    timeout=config.timeout,
-                    user_id=task_idx,
-                    on_complete=lambda: progress.advance(progress_task_id),
-                    model_context_length=model_context_length,
-                    extra_body=extra_body,
-                )
-
     total_progress = total_entries
+
+    # Pool of J long-lived httpx clients, one per slot. Keepalive / connection
+    # reuse within a slot simulates a real user holding an open session,
+    # which matters for prefix-cache measurements.
+    j = max(1, min(schedule.max_concurrent, len(execution_queue)))
 
     with Progress(
         SpinnerColumn(),
@@ -459,14 +463,42 @@ async def replay_scenario(
             total=total_progress,
         )
 
-        coros = [_run_one_task(task, idx) for idx, (task, _exec_idx) in enumerate(execution_queue)]
-        all_results = await asyncio.gather(*coros)
+        async with contextlib.AsyncExitStack() as stack:
+            slot_clients: list[httpx.AsyncClient] = [
+                await stack.enter_async_context(httpx.AsyncClient())
+                for _ in range(j)
+            ]
+
+            async def _run_schedule_task(
+                sched_task: tuple[Task, int],
+                slot_id: int,
+            ) -> list[RequestMetrics]:
+                task, _exec_idx = sched_task
+                return await _replay_task_entries(
+                    client=slot_clients[slot_id],
+                    url=url,
+                    model_override=config.model,
+                    headers=headers,
+                    entries=task.entries,
+                    timeout=config.timeout,
+                    user_id=slot_id,
+                    on_complete=lambda: progress.advance(progress_task_id),
+                    model_context_length=model_context_length,
+                    extra_body=extra_body,
+                )
+
+            all_results = await run_work_queue(
+                execution_queue,
+                _run_schedule_task,
+                max_concurrent=j,
+            )
 
         progress.remove_task(progress_task_id)
 
     flat_results: list[RequestMetrics] = []
     for task_results in all_results:
-        flat_results.extend(task_results)
+        if task_results:
+            flat_results.extend(task_results)
 
     buckets: dict[str, list[RequestMetrics]] = {}
     for m in flat_results:
@@ -580,6 +612,22 @@ def _print_replay_summary(run: BenchmarkRun, scenario: Scenario) -> None:
         )
 
 
+def _schedule_line(schedule: Schedule) -> str:
+    """Human-readable schedule summary, always including the seed when set.
+
+    Avoids square brackets around the seed so Rich doesn't try to parse
+    it as a style tag and silently drop it.
+    """
+    parts = [
+        f"  Schedule: {schedule.policy}",
+        f"× {schedule.repetitions} reps",
+        f"(max {schedule.max_concurrent} concurrent)",
+    ]
+    if schedule.seed is not None:
+        parts.append(f"seed={schedule.seed}")
+    return " ".join(parts)
+
+
 def _print_replay_dry_run(
     scenario: Scenario,
     url: str,
@@ -590,11 +638,7 @@ def _print_replay_dry_run(
     console.print(f"  Scenario: {scenario.name}")
     console.print(f"  Tasks: {len(scenario.tasks)}")
     console.print(f"  Total requests: {scenario.total_requests}")
-    console.print(
-        f"  Schedule: {schedule.policy}"
-        f" × {schedule.repetitions} reps"
-        f" (max {schedule.max_concurrent} concurrent)"
-    )
+    console.print(_schedule_line(schedule))
     console.print(f"  Approx tokens: {scenario.total_tokens_approx:,}")
 
     for task in scenario.tasks[:5]:

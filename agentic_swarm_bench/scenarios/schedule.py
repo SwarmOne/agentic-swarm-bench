@@ -1,26 +1,55 @@
-"""Execution schedule for scenario replay.
+"""Schedule-task model and work-queue dispatcher.
 
-Controls how tasks from a scenario are ordered and rate-limited during replay:
-  - repetitions: how many times each task runs
-  - max_concurrent: maximum tasks executing at the same time
-  - policy: ordering strategy (round_robin, sequential, random)
+Mike's mental model (see docs/SCHEDULING.md):
+
+    schedule-task = (task, execution_index)
+        one task run once; each has r_1..r_n underlying request entries.
+
+    With T distinct tasks and R repetitions, there are T*R schedule-tasks
+    in total. Given J concurrency slots, we:
+
+      1. Pre-generate a single ordered list L of all T*R schedule-tasks
+         using one of three policies:
+            - sequential:  t1r1, t1r2, ..., t1rR, t2r1, ..., t2rR, ...
+            - round_robin: t1r1, t2r1, ..., tTr1, t1r2, ..., tTrR
+            - random:      shuffle(sequential)
+
+      2. Spin up exactly J long-lived workers. Each worker pulls the
+         next item off the head of L, runs it, then pulls the next.
+         No worker ever waits for the others. When L is empty, workers
+         exit. This is a rolling pool, not a lockstep batch.
+
+The ``Schedule`` dataclass bundles (R, J, policy, seed). The
+``build_execution_queue`` function produces L. The ``run_work_queue``
+coroutine is the literal pool-of-J dispatcher.
 """
 
 from __future__ import annotations
 
+import asyncio
+import collections
 import random
 from dataclasses import dataclass
-
-from agentic_swarm_bench.scenarios.registry import Task
+from typing import Awaitable, Callable, Sequence, TypeVar
 
 VALID_POLICIES = ("round_robin", "sequential", "random")
 
 
 @dataclass
 class Schedule:
+    """Concurrency + ordering controls for a benchmark run.
+
+    Attributes:
+        repetitions:    R, how many times each task runs.
+        max_concurrent: J, pool size of parallel workers.
+        policy:         How L is ordered before dispatch.
+        seed:           RNG seed for policy="random" (None = non-reproducible).
+    """
+
     repetitions: int = 1
     max_concurrent: int = 10
     policy: str = "round_robin"
+    seed: int | None = None
 
     def __post_init__(self):
         if self.repetitions < 1:
@@ -31,34 +60,86 @@ class Schedule:
             raise ValueError(f"policy must be one of {VALID_POLICIES}, got {self.policy!r}")
 
 
+T = TypeVar("T")
+R = TypeVar("R")
+
+
 def build_execution_queue(
-    tasks: list[Task],
+    items: Sequence[T],
     schedule: Schedule,
     *,
     seed: int | None = None,
-) -> list[tuple[Task, int]]:
-    """Generate the ordered list of (task, execution_index) from a schedule.
+) -> list[tuple[T, int]]:
+    """Build the ordered pending list L of (item, execution_index) schedule-tasks.
 
-    Returns a flat list where each element is a (task, execution_index) tuple.
-    The execution_index is the repetition number for that task (0-based).
+    ``items`` is typically a list of ``Task`` (replay) or task dicts (agent).
+    ``execution_index`` is the 0-based repetition number for that item.
 
     Policies:
-      round_robin: T1_0,T2_0,T3_0,T1_1,T2_1,T3_1,...
-      sequential:  T1_0,T1_1,T1_2,T2_0,T2_1,T2_2,...
-      random:      shuffled
+      sequential:  [(t1,0),(t1,1)..(t1,R-1),(t2,0),(t2,1)..]
+      round_robin: [(t1,0),(t2,0)..(tN,0),(t1,1),(t2,1)..]
+      random:      shuffle(sequential)
+
+    Seed precedence: explicit ``seed=`` argument wins over ``schedule.seed``.
+    When the effective seed is None, random.Random(None) uses system entropy
+    so every call produces a different order. Pass a seed to reproduce runs.
     """
-    if not tasks:
+    if not items:
         return []
 
-    if schedule.policy == "sequential":
-        queue = [(t, rep) for t in tasks for rep in range(schedule.repetitions)]
-    elif schedule.policy == "round_robin":
-        queue = [(t, rep) for rep in range(schedule.repetitions) for t in tasks]
-    elif schedule.policy == "random":
-        queue = [(t, rep) for t in tasks for rep in range(schedule.repetitions)]
-        rng = random.Random(seed)
-        rng.shuffle(queue)
-    else:
-        raise ValueError(f"Unknown policy: {schedule.policy!r}")
+    reps = schedule.repetitions
 
-    return queue
+    if schedule.policy == "sequential":
+        return [(x, r) for x in items for r in range(reps)]
+
+    if schedule.policy == "round_robin":
+        return [(x, r) for r in range(reps) for x in items]
+
+    if schedule.policy == "random":
+        queue: list[tuple[T, int]] = [(x, r) for x in items for r in range(reps)]
+        effective_seed = seed if seed is not None else schedule.seed
+        random.Random(effective_seed).shuffle(queue)
+        return queue
+
+    raise ValueError(f"Unknown policy: {schedule.policy!r}")
+
+
+async def run_work_queue(
+    queue: Sequence[T],
+    worker: Callable[[T, int], Awaitable[R]],
+    max_concurrent: int,
+) -> list[R]:
+    """Dispatch ``queue`` via a rolling pool of ``max_concurrent`` workers.
+
+    Each of the J workers loops:
+        while pending:
+            item = pending.popleft()
+            result = await worker(item, slot_id)
+
+    Workers never wait for each other. As soon as a worker finishes its
+    current item, it pulls the next head of pending. If J exceeds the
+    queue length, excess workers exit immediately without running anything.
+
+    Safe under asyncio because ``deque.popleft`` is atomic between awaits:
+    each worker reads/pops the queue without yielding, so two workers can
+    never pop the same item.
+
+    Returns results in input order: ``results[i]`` is the output of
+    ``worker(queue[i], ...)``. None entries indicate skipped or failed
+    items (worker returning None).
+    """
+    n = len(queue)
+    if n == 0:
+        return []
+
+    pending: collections.deque[tuple[int, T]] = collections.deque(enumerate(queue))
+    results: list[R | None] = [None] * n
+
+    async def worker_loop(slot_id: int) -> None:
+        while pending:
+            idx, item = pending.popleft()
+            results[idx] = await worker(item, slot_id)
+
+    j = max(1, min(max_concurrent, n))
+    await asyncio.gather(*[worker_loop(i) for i in range(j)])
+    return results  # type: ignore[return-value]

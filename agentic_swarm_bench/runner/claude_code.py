@@ -1,4 +1,17 @@
-"""Agent runner: orchestrates Claude Code (or similar) through the recording proxy."""
+"""Agent runner: orchestrates Claude Code (or similar) through the recording proxy.
+
+The runner models the workload exactly like ``asb replay``:
+
+    schedule-task = (task, execution_index)
+        One CLI invocation of the agent on one task.
+
+    With T tasks and R repetitions, there are T*R schedule-tasks. A
+    Schedule (R, J, policy, seed) orders them into a single pending list
+    L; then a pool of J parallel subprocess workers pulls items off L
+    until drained. Nothing ever waits for a batch peer.
+
+This matches Mike's work-queue model from docs/SCHEDULING.md.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +19,6 @@ import asyncio
 import json
 import os
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -16,6 +28,11 @@ from rich.console import Console
 from rich.table import Table
 
 from agentic_swarm_bench.config import BenchmarkConfig
+from agentic_swarm_bench.scenarios.schedule import (
+    Schedule,
+    build_execution_queue,
+    run_work_queue,
+)
 from agentic_swarm_bench.tasks.registry import get_tasks
 
 console = Console()
@@ -24,8 +41,14 @@ console = Console()
 async def run_agent_benchmark(
     config: BenchmarkConfig,
     agent_cmd: str = "claude",
+    schedule: Schedule | None = None,
 ) -> None:
-    """Run agentic benchmark: start proxy, feed tasks through an agent, collect metrics."""
+    """Run agentic benchmark: start proxy, feed a scheduled workload through agents.
+
+    ``schedule`` controls (R, J, policy, seed). When omitted, defaults to
+    one repetition per task, one worker at a time, sequential order --
+    matching pre-3.2.0 behavior.
+    """
     if not shutil.which(agent_cmd):
         console.print(
             f"[red]Error: '{agent_cmd}' not found in PATH.[/red]\n"
@@ -33,11 +56,17 @@ async def run_agent_benchmark(
         )
         return
 
+    if schedule is None:
+        schedule = Schedule(repetitions=1, max_concurrent=1, policy="sequential")
+
     tasks = get_tasks(task_range=config.task_range)
     if not tasks:
         tasks = get_tasks(task_range="p1-p10")
 
     workdir = Path(tempfile.mkdtemp(prefix="agentic-swarm-bench-"))
+
+    execution_queue = build_execution_queue(tasks, schedule)
+    total_schedule_tasks = len(execution_queue)
 
     console.print("\n[bold]agentic-swarm-bench agent[/bold]")
     console.print(f"  Upstream: {config.endpoint}")
@@ -45,6 +74,12 @@ async def run_agent_benchmark(
     console.print(f"  Agent: {agent_cmd}")
     console.print(f"  Proxy port: {config.proxy_port}")
     console.print(f"  Tasks: {len(tasks)}")
+    console.print(f"  Schedule: {schedule.policy}"
+                  f" × {schedule.repetitions} reps"
+                  f" (max {schedule.max_concurrent} parallel agents)")
+    if schedule.seed is not None:
+        console.print(f"  Seed: {schedule.seed}")
+    console.print(f"  Total schedule-tasks: {total_schedule_tasks}")
     console.print(f"  Workdir: {workdir}")
 
     from agentic_swarm_bench.proxy.server import _detect_upstream_api
@@ -52,7 +87,7 @@ async def run_agent_benchmark(
     detected_api = _detect_upstream_api(config.endpoint, config.upstream_api)
     console.print(f"  Upstream API: {detected_api}")
 
-    proxy_proc = _start_proxy(config, log_dir=str(workdir))
+    proxy_proc = await _start_proxy(config, log_dir=str(workdir))
     if proxy_proc is None:
         return
 
@@ -60,7 +95,7 @@ async def run_agent_benchmark(
         await asyncio.sleep(2)
 
         if not await _preflight_check(config.endpoint, detected_api):
-            _stop_proxy(proxy_proc)
+            await _stop_proxy(proxy_proc)
             return
 
         env = os.environ.copy()
@@ -70,68 +105,140 @@ async def run_agent_benchmark(
         env["CLAUDE_MODEL"] = config.model
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
 
-        empty_count = 0
-        for i, task in enumerate(tasks):
-            task_dir = workdir / f"task_{task['id']}"
-            task_dir.mkdir(parents=True, exist_ok=True)
+        state = _AgentRunState()
 
-            console.print(f"\n  [{i + 1}/{len(tasks)}] {task['id']}: {task['prompt'][:70]}...")
+        async def _run_schedule_task(
+            sched_task: tuple[dict, int],
+            slot_id: int,
+        ) -> None:
+            task, exec_idx = sched_task
+            await _run_one_agent_task(
+                task=task,
+                exec_idx=exec_idx,
+                slot_id=slot_id,
+                total=total_schedule_tasks,
+                agent_cmd=agent_cmd,
+                env=env,
+                workdir=workdir,
+                timeout=config.timeout,
+                state=state,
+            )
 
-            t_start = time.perf_counter()
-            try:
-                result = subprocess.run(
-                    [agent_cmd, "--print", task["prompt"]],
-                    cwd=str(task_dir),
-                    env=env,
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
-                    timeout=config.timeout,
-                )
-                elapsed = time.perf_counter() - t_start
-                console.print(f"    Completed in {elapsed:.1f}s (exit={result.returncode})")
-
-                log_file = workdir / f"{task['id']}.log"
-                with open(log_file, "w") as f:
-                    f.write(result.stdout)
-                    if result.stderr:
-                        f.write("\n--- STDERR ---\n")
-                        f.write(result.stderr)
-
-                if not result.stdout.strip():
-                    empty_count += 1
-                    if result.stderr.strip():
-                        stderr_preview = result.stderr.strip()[:200]
-                        console.print(
-                            f"    [dim yellow]No stdout. stderr: {stderr_preview}[/dim yellow]"
-                        )
-
-                if empty_count >= 3 and i < 3:
-                    console.print(
-                        "\n  [bold red]Aborting: first 3 tasks "
-                        "all produced empty output.[/bold red]"
-                        "\n  [red]The upstream endpoint is likely "
-                        "not returning valid LLM responses."
-                        "\n  Check that your endpoint serves "
-                        "OpenAI-compatible /v1/chat/completions."
-                        "[/red]"
-                    )
-                    break
-
-            except subprocess.TimeoutExpired:
-                console.print(f"    [yellow]Timed out after {config.timeout}s[/yellow]")
-            except Exception as e:
-                console.print(f"    [red]Error: {e}[/red]")
-
-            await asyncio.sleep(1)
+        await run_work_queue(
+            execution_queue,
+            _run_schedule_task,
+            max_concurrent=schedule.max_concurrent,
+        )
 
         _drain_proxy_stderr(proxy_proc, workdir)
         summary = await _fetch_and_save_summary(config.proxy_port, workdir)
-        _print_results(summary, workdir, empty_count=empty_count, total_tasks=len(tasks))
-        _cleanup_workdir(workdir, keep_logs=(empty_count > 0))
+        _print_results(
+            summary,
+            workdir,
+            empty_count=state.empty_count,
+            total_tasks=total_schedule_tasks,
+        )
+        _cleanup_workdir(workdir, keep_logs=(state.empty_count > 0))
 
     finally:
-        _stop_proxy(proxy_proc)
+        await _stop_proxy(proxy_proc)
+
+
+class _AgentRunState:
+    """Mutable counters shared across concurrent agent workers."""
+
+    def __init__(self) -> None:
+        self.empty_count = 0
+        self.completed = 0
+        self._lock = asyncio.Lock()
+
+    async def record_completion(self, empty: bool) -> int:
+        async with self._lock:
+            self.completed += 1
+            if empty:
+                self.empty_count += 1
+            return self.completed
+
+
+async def _run_one_agent_task(
+    *,
+    task: dict,
+    exec_idx: int,
+    slot_id: int,
+    total: int,
+    agent_cmd: str,
+    env: dict,
+    workdir: Path,
+    timeout: float,
+    state: _AgentRunState,
+) -> None:
+    """Launch one agent subprocess for one schedule-task and capture its output."""
+    task_dir = workdir / f"slot{slot_id}_{task['id']}_r{exec_idx}"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    label = f"{task['id']}#r{exec_idx}"
+    preview = task["prompt"][:70]
+    console.print(f"\n  [slot {slot_id}] start {label}: {preview}...")
+
+    t_start = time.perf_counter()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            agent_cmd,
+            "--print",
+            task["prompt"],
+            cwd=str(task_dir),
+            env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as e:
+        console.print(f"    [red][slot {slot_id}] spawn failed: {e}[/red]")
+        await state.record_completion(empty=True)
+        return
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout,
+        )
+        stdout = stdout_bytes.decode(errors="replace")
+        stderr = stderr_bytes.decode(errors="replace")
+        returncode = proc.returncode
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        elapsed = time.perf_counter() - t_start
+        console.print(
+            f"    [slot {slot_id}] [yellow]{label} timed out after {elapsed:.0f}s[/yellow]"
+        )
+        await state.record_completion(empty=True)
+        return
+
+    elapsed = time.perf_counter() - t_start
+
+    log_file = workdir / f"slot{slot_id}_{task['id']}_r{exec_idx}.log"
+    log_file.write_text(stdout + ("\n--- STDERR ---\n" + stderr if stderr else ""))
+
+    empty = not stdout.strip()
+    completed = await state.record_completion(empty=empty)
+
+    status = f"exit={returncode}"
+    if empty and stderr.strip():
+        preview_err = stderr.strip()[:150]
+        console.print(
+            f"    [slot {slot_id}] [{completed}/{total}] {label} {status} "
+            f"{elapsed:.1f}s [dim yellow](empty stdout; stderr: {preview_err})[/dim yellow]"
+        )
+    elif empty:
+        console.print(
+            f"    [slot {slot_id}] [{completed}/{total}] {label} {status} "
+            f"{elapsed:.1f}s [yellow](empty stdout)[/yellow]"
+        )
+    else:
+        console.print(
+            f"    [slot {slot_id}] [{completed}/{total}] {label} {status} {elapsed:.1f}s"
+        )
 
 
 async def _preflight_check(endpoint: str, upstream_api: str) -> bool:
@@ -186,24 +293,32 @@ async def _preflight_check(endpoint: str, upstream_api: str) -> bool:
         return True
 
 
-def _drain_proxy_stderr(proxy_proc: subprocess.Popen, workdir: Path) -> None:
+def _drain_proxy_stderr(proxy_proc: asyncio.subprocess.Process, workdir: Path) -> None:
     """Read any buffered proxy stderr and save it for diagnostics."""
-    import select
-
     if proxy_proc.stderr is None:
         return
     try:
-        ready, _, _ = select.select([proxy_proc.stderr], [], [], 0.5)
-        if ready:
-            stderr_data = proxy_proc.stderr.read1(8192).decode(errors="replace")
-            if stderr_data.strip():
-                proxy_log = workdir / "proxy.log"
-                proxy_log.write_text(stderr_data)
-                for line in stderr_data.strip().splitlines()[:5]:
-                    if "error" in line.lower():
-                        console.print(f"  [dim red]Proxy: {line.strip()}[/dim red]")
+        stderr_data = b""
+        while True:
+            try:
+                chunk = proxy_proc.stderr._buffer[:8192]  # type: ignore[attr-defined]
+            except AttributeError:
+                break
+            if not chunk:
+                break
+            stderr_data += chunk
+            break
     except Exception:
-        pass
+        stderr_data = b""
+
+    text = stderr_data.decode(errors="replace")
+    if not text.strip():
+        return
+    proxy_log = workdir / "proxy.log"
+    proxy_log.write_text(text)
+    for line in text.strip().splitlines()[:5]:
+        if "error" in line.lower():
+            console.print(f"  [dim red]Proxy: {line.strip()}[/dim red]")
 
 
 async def _fetch_and_save_summary(proxy_port: int, workdir: Path) -> dict | None:
@@ -252,7 +367,8 @@ def _print_results(
 
     if empty_count and total_tasks:
         console.print(
-            f"  [yellow]Empty output: {empty_count}/{total_tasks} tasks produced no stdout[/yellow]"
+            f"  [yellow]Empty output: {empty_count}/{total_tasks} "
+            f"schedule-tasks produced no stdout[/yellow]"
         )
 
     if not summary or "error" in summary:
@@ -299,21 +415,27 @@ def _cleanup_workdir(workdir: Path, keep_logs: bool) -> None:
         return
     for log_file in workdir.glob("*.log"):
         log_file.unlink()
-    for task_dir in workdir.glob("task_*"):
+    for task_dir in workdir.glob("slot*"):
         if task_dir.is_dir() and not any(task_dir.iterdir()):
             task_dir.rmdir()
 
 
-def _stop_proxy(proxy_proc: subprocess.Popen) -> None:
+async def _stop_proxy(proxy_proc: asyncio.subprocess.Process) -> None:
     """Gracefully stop the proxy subprocess."""
+    if proxy_proc.returncode is not None:
+        return
     proxy_proc.terminate()
     try:
-        proxy_proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
+        await asyncio.wait_for(proxy_proc.wait(), timeout=5.0)
+    except asyncio.TimeoutError:
         proxy_proc.kill()
+        await proxy_proc.wait()
 
 
-def _start_proxy(config: BenchmarkConfig, log_dir: str = "./traces") -> subprocess.Popen | None:
+async def _start_proxy(
+    config: BenchmarkConfig,
+    log_dir: str = "./traces",
+) -> asyncio.subprocess.Process | None:
     """Start the recording proxy as a subprocess."""
     try:
         import agentic_swarm_bench.proxy.server  # noqa: F401
@@ -341,10 +463,13 @@ def _start_proxy(config: BenchmarkConfig, log_dir: str = "./traces") -> subproce
         }
     )
 
-    proc = subprocess.Popen(
-        [sys.executable, "-c", script, args_json],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        script,
+        args_json,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     console.print(f"  Proxy started (PID {proc.pid})")
     return proc
