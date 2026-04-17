@@ -70,6 +70,10 @@ class BenchmarkConfig:
     cache_mode: str = "allcold"  # allcold | allwarm | realistic
     timeout: float = 300.0
 
+    # Arbitrary JSON merged into the streaming request body. Used to pass
+    # vLLM-specific options like chat_template_kwargs.enable_thinking=true.
+    extra_body: Optional[dict] = None
+
     output: Optional[str] = None
     output_format: str = "markdown"
     dry_run: bool = False

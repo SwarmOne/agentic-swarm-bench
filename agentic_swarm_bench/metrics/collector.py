@@ -21,6 +21,29 @@ _CONTEXT_LENGTH_PATTERNS = [
 ]
 
 
+def _percentiles(values: list[float]) -> dict:
+    """Compute p50/p95/p99 + min/max/mean; all fields are always present."""
+    if not values:
+        return {"count": 0, "p50": 0, "p95": 0, "p99": 0, "min": 0, "max": 0, "mean": 0}
+    s = sorted(values)
+    n = len(s)
+
+    def pct(p: float) -> float:
+        idx = min(n - 1, max(0, int(p * n)))
+        return round(s[idx], 2)
+
+    mean = round(sum(s) / n, 2)
+    return {
+        "count": n,
+        "p50": pct(0.50),
+        "p95": pct(0.95),
+        "p99": pct(0.99),
+        "min": round(s[0], 2),
+        "max": round(s[-1], 2),
+        "mean": mean,
+    }
+
+
 def is_context_length_error(error: str | None) -> bool:
     """Return True if the error string indicates the prompt exceeded the model's context window."""
     if not error:
@@ -34,6 +57,7 @@ class RequestMetrics:
     """Timing and throughput metrics for a single streaming request."""
 
     request_id: int = 0
+    repetition_id: int = 0
     user_id: int = 0
     task_id: str = ""
     context_profile: str = ""
@@ -89,6 +113,7 @@ class RequestMetrics:
     def to_dict(self) -> dict:
         d = {
             "request_id": self.request_id,
+            "repetition_id": self.repetition_id,
             "user_id": self.user_id,
             "task_id": self.task_id,
             "context_profile": self.context_profile,
@@ -119,6 +144,7 @@ class ScenarioResult:
     context_tokens: int = 0
     wall_time_s: float = 0.0
     requests: list[RequestMetrics] = field(default_factory=list)
+    cache_mode: str | None = None
 
     @property
     def successes(self) -> list[RequestMetrics]:
@@ -133,7 +159,7 @@ class ScenarioResult:
         return any(r.thinking_tokens > 0 for r in self.successes)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "num_users": self.num_users,
             "context_profile": self.context_profile,
             "context_tokens": self.context_tokens,
@@ -143,6 +169,9 @@ class ScenarioResult:
             "failed": len(self.failures),
             "requests": [r.to_dict() for r in self.requests],
         }
+        if self.cache_mode is not None:
+            d["cache_mode"] = self.cache_mode
+        return d
 
 
 @dataclass
@@ -157,11 +186,69 @@ class BenchmarkRun:
         return any(s.has_thinking for s in self.scenarios)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "model": self.model,
             "endpoint": self.endpoint,
             "started_at": self.started_at,
             "scenarios": [s.to_dict() for s in self.scenarios],
+        }
+        summary = self._summary()
+        if summary is not None:
+            d["summary"] = summary
+            d["verdict"] = summary["verdict"]
+        return d
+
+    def _summary(self) -> dict | None:
+        """Aggregate verdict + percentiles across all scenarios (CI consumable)."""
+        if not self.scenarios:
+            return None
+
+        # Defer import to avoid a cycle.
+        from agentic_swarm_bench.metrics.stats import analyze_scenario
+        from agentic_swarm_bench.report.markdown import _verdict_for_stats
+
+        total_reqs = 0
+        total_ok = 0
+        total_fail = 0
+        ttft_values: list[float] = []
+        tok_values: list[float] = []
+        itl_values: list[float] = []
+
+        verdict_stats = None
+        for s in self.scenarios:
+            total_reqs += len(s.requests)
+            total_ok += len(s.successes)
+            total_fail += len(s.failures)
+            for r in s.successes:
+                if r.ttft_ms > 0:
+                    ttft_values.append(r.ttft_ms)
+                if r.tok_per_sec > 0:
+                    tok_values.append(r.tok_per_sec)
+                itl_values.extend(r.itl_ms)
+
+            stats = analyze_scenario(s)
+            base = s.context_profile.split("(")[0].strip()
+            if stats.successful > 0 and base in ("medium", "long"):
+                if verdict_stats is None or stats.num_users < verdict_stats.num_users:
+                    verdict_stats = stats
+
+        if verdict_stats is None:
+            for s in self.scenarios:
+                stats = analyze_scenario(s)
+                if stats.successful > 0:
+                    verdict_stats = stats
+                    break
+
+        verdict = _verdict_for_stats(verdict_stats) if verdict_stats else "unknown"
+
+        return {
+            "verdict": verdict,
+            "total_requests": total_reqs,
+            "successful": total_ok,
+            "failed": total_fail,
+            "ttft_ms": _percentiles(ttft_values),
+            "tok_per_sec": _percentiles(tok_values),
+            "itl_ms": _percentiles(itl_values),
         }
 
     def save(self, path: str) -> None:
@@ -186,10 +273,12 @@ class BenchmarkRun:
                 context_profile=s_data["context_profile"],
                 context_tokens=s_data["context_tokens"],
                 wall_time_s=s_data["wall_time_s"],
+                cache_mode=s_data.get("cache_mode"),
             )
             for r_data in s_data.get("requests", []):
                 m = RequestMetrics(
                     request_id=r_data.get("request_id", 0),
+                    repetition_id=r_data.get("repetition_id", 0),
                     user_id=r_data.get("user_id", 0),
                     task_id=r_data.get("task_id", ""),
                     context_profile=r_data.get("context_profile", ""),

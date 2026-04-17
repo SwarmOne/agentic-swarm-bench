@@ -124,6 +124,9 @@ def _verdict_section(all_stats: list[tuple]) -> str:
     if not successful:
         return "---\n\n## Verdict\n\n**No successful requests.** Check endpoint configuration.\n"
 
+    lines = ["---\n", "## Verdict\n"]
+
+    # Primary verdict: medium/long at minimum concurrency, matching the CLI summary.
     best = None
     for _, st in successful:
         p = _base_profile(st.context_profile)
@@ -137,15 +140,40 @@ def _verdict_section(all_stats: list[tuple]) -> str:
     icon = _grade_icon(verdict)
     label = _verdict_label(verdict)
 
-    lines = [
-        "---\n",
-        "## Verdict\n",
-        f"> {icon} **{label}** at `{best.context_profile}` context with {best.num_users} user(s)",
-        ">",
+    lines.append(
+        f"> {icon} **{label}** at `{best.context_profile}` context with {best.num_users} user(s)"
+    )
+    lines.append(">")
+    lines.append(
         f"> **{_fmt_ms(best.ttft_ms.median)} ms** first token · "
         f"**{best.tok_per_sec.median:.1f}** tok/s/user · "
-        f"**{best.aggregate_tok_per_sec:.0f}** tok/s aggregate\n",
-    ]
+        f"**{best.aggregate_tok_per_sec:.0f}** tok/s aggregate\n"
+    )
+
+    # If the run includes more than one pass (allcold + allwarm), surface a
+    # per-pass verdict so CI consumers can see whether warm-cache performance
+    # clears the bar.
+    seen_passes: dict[str, tuple] = {}
+    for _, st in successful:
+        if "(" not in st.context_profile:
+            continue
+        pass_label = st.context_profile.split("(", 1)[1].rstrip(")").strip()
+        if pass_label and pass_label not in seen_passes:
+            seen_passes[pass_label] = st
+
+    if len(seen_passes) > 1:
+        lines.append("### Per-pass verdict\n")
+        lines.append("| Pass | Context | Verdict | TTFT p50 | Tok/s/user |")
+        lines.append("|------|---------|:-------:|---------:|-----------:|")
+        for pass_label, st in seen_passes.items():
+            v = _verdict_for_stats(st)
+            lines.append(
+                f"| `{pass_label}` | `{st.context_profile}` | "
+                f"{_grade_icon(v)} {_verdict_label(v).split(' for')[0]} | "
+                f"{_fmt_ms(st.ttft_ms.median)} ms | {st.tok_per_sec.median:.1f} |"
+            )
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -547,13 +575,19 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
     a_wins = 0
     b_wins = 0
     n_valid = 0  # scenarios where both sides had successful requests
+    n_no_overlap = 0  # present on one side but not the other
+    n_fail = 0  # present on both but one/both failed
     for key in all_keys:
         a = stats_a.get(key)
         b = stats_b.get(key)
-        a_ok = a is not None and a.successful > 0
-        b_ok = b is not None and b.successful > 0
+        if a is None or b is None:
+            n_no_overlap += 1
+            continue
+        a_ok = a.successful > 0
+        b_ok = b.successful > 0
         if not (a_ok and b_ok):
-            continue  # skip N/A scenarios from win counting
+            n_fail += 1
+            continue
         n_valid += 1
         a_tok = a.tok_per_sec.median
         b_tok = b.tok_per_sec.median
@@ -562,9 +596,13 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
         elif b_tok > a_tok:
             b_wins += 1
 
-    n_invalid = len(all_keys) - n_valid
-    failure_note = f" ({n_invalid} scenario(s) excluded: zero completions)" if n_invalid else ""
-    total_label = f"{n_valid}" if not n_invalid else f"{n_valid}/{len(all_keys)} valid"
+    exclusion_notes = []
+    if n_no_overlap:
+        exclusion_notes.append(f"{n_no_overlap} scenario(s) only on one side")
+    if n_fail:
+        exclusion_notes.append(f"{n_fail} scenario(s) with zero completions")
+    failure_note = f" ({'; '.join(exclusion_notes)})" if exclusion_notes else ""
+    total_label = f"{n_valid}" if not exclusion_notes else f"{n_valid}/{len(all_keys)} valid"
 
     if a_wins > b_wins:
         lines.append(
@@ -576,11 +614,22 @@ def generate_comparison(run_a: BenchmarkRun, run_b: BenchmarkRun) -> str:
             f"\n> **Candidate** (`{run_b.model}`) wins "
             f"**{b_wins}/{n_valid}** scenarios{failure_note}\n"
         )
-    elif n_valid == 0:
+    elif n_valid == 0 and n_no_overlap and not n_fail:
+        overlap_keys_a = ", ".join(f"{u}u/{p}" for u, p in sorted(stats_a.keys())) or "none"
+        overlap_keys_b = ", ".join(f"{u}u/{p}" for u, p in sorted(stats_b.keys())) or "none"
+        lines.append(
+            "\n> No shared (users, profile) pairs between baseline and candidate.\n"
+            f"> Baseline ran: {overlap_keys_a}\n"
+            f"> Candidate ran: {overlap_keys_b}\n"
+            "> Re-run both with the same `-u` and `-p` / `--suite` to compare.\n"
+        )
+    elif n_valid == 0 and n_fail:
         lines.append(
             "\n> No valid comparison scenarios"
-            " (all requests failed on one or both sides)\n"
+            " (all overlapping scenarios had zero completions on one or both sides).\n"
         )
+    elif n_valid == 0:
+        lines.append("\n> No comparison scenarios.\n")
     else:
         lines.append(f"\n> **Tied** across {total_label} scenarios{failure_note}\n")
 

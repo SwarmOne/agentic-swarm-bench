@@ -64,7 +64,12 @@ def test_old_both_alias():
 
 
 async def test_empty_scenarios_raises_system_exit():
-    """model_context_length=1 excludes every profile (all > 1 token)."""
+    """model_context_length=1 excludes every profile (all > 1 token).
+
+    Exit code 2 signals a usage error (misconfigured scenarios) so CI can
+    distinguish "you passed bad flags" from "your endpoint returned errors"
+    (which exits 1 via _enforce_exit_code).
+    """
     config = BenchmarkConfig(
         endpoint="http://test:8000",
         model="test-model",
@@ -72,7 +77,7 @@ async def test_empty_scenarios_raises_system_exit():
     )
     with pytest.raises(SystemExit) as exc:
         await run_speed_benchmark(config)
-    assert exc.value.code == 1
+    assert exc.value.code == 2
 
 
 # ---------------------------------------------------------------------------
