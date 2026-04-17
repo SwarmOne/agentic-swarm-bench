@@ -2,6 +2,25 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [3.3.0] - 2026-04-17
+
+### Summary
+
+All default output — CLI tables, markdown reports, and JSON summaries — now surfaces **both decode tok/s and prefill tok/s** with explicit labels. Previously only one throughput number was shown (generically labeled "Tok/s"), making it unclear whether the metric measured decode-phase streaming speed or prefill-phase input processing rate. Both are now reported side-by-side everywhere.
+
+### Added
+
+- **Prefill tok/s in CLI output.** Replay bucket stats, replay summary table, speed per-scenario stats, and speed summary table now include prefill tok/s alongside decode tok/s.
+- **Prefill tok/s in markdown reports.** The Results summary table has a new "Prefill tok/s" column. The verdict line includes prefill speed when available.
+- **`prefill_tok_per_sec` in JSON summary.** The top-level `summary` blob in saved JSON results now includes `prefill_tok_per_sec` percentiles (p50/p95/p99/min/max/mean), so CI consumers get both throughput metrics without parsing per-request data.
+- **Explicit decode/prefill labels in methodology.** The report methodology section now distinguishes "Decode tok/s" (output token throughput after first token) from "Prefill tok/s" (input token processing rate during TTFT).
+
+### Changed
+
+- **"Tok/s" renamed to "Decode tok/s" everywhere.** CLI tables, markdown report columns, comparison reports, context scaling charts, concurrency scaling tables, and the agent proxy summary all use the explicit "Decode" label so users know exactly which phase the number measures.
+
+---
+
 ## [3.2.0] - 2026-04-17
 
 ### Summary
