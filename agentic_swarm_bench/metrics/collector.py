@@ -233,6 +233,7 @@ class BenchmarkRun:
         total_fail = 0
         ttft_values: list[float] = []
         tok_values: list[float] = []
+        prefill_values: list[float] = []
         itl_values: list[float] = []
 
         verdict_stats = None
@@ -245,6 +246,8 @@ class BenchmarkRun:
                     ttft_values.append(r.ttft_ms)
                 if r.tok_per_sec > 0:
                     tok_values.append(r.tok_per_sec)
+                if r.prefill_tok_per_sec > 0:
+                    prefill_values.append(r.prefill_tok_per_sec)
                 itl_values.extend(r.itl_ms)
 
             stats = analyze_scenario(s)
@@ -269,6 +272,7 @@ class BenchmarkRun:
             "failed": total_fail,
             "ttft_ms": _percentiles(ttft_values),
             "tok_per_sec": _percentiles(tok_values),
+            "prefill_tok_per_sec": _percentiles(prefill_values),
             "itl_ms": _percentiles(itl_values),
         }
 
