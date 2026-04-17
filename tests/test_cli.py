@@ -114,3 +114,53 @@ def test_replay_cache_mode_in_help(mode):
     result = RUNNER.invoke(main, ["replay", "--help"])
     assert result.exit_code == 0
     assert mode in result.output
+
+
+def test_replay_users_flag_rejected_with_migration_hint():
+    """`--users N` on replay must hard-fail with a message pointing to --repetitions.
+
+    The flag was removed because all N "users" sent byte-identical poisoned
+    payloads, so users 1..N-1 rode the KV cache for free and cache hit-rate
+    was artificially inflated. We keep it hidden just to produce a precise
+    error instead of Click's generic "no such option".
+    """
+    result = RUNNER.invoke(
+        main,
+        [
+            "replay",
+            "--endpoint", "http://localhost:8000",
+            "--model", "test-model",
+            "--scenario", "noop",
+            "--users", "8",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--users" in result.output
+    assert "--repetitions" in result.output
+    assert "--max-concurrent" in result.output
+
+
+def test_replay_users_flag_hidden_from_help():
+    """The deprecated --users flag must not appear in `asb replay --help`."""
+    result = RUNNER.invoke(main, ["replay", "--help"])
+    assert result.exit_code == 0
+    assert "--users" not in result.output
+
+
+def test_replay_repetitions_max_concurrent_dry_run():
+    """--repetitions + --max-concurrent (the new recipe for 'N concurrent users') works."""
+    result = RUNNER.invoke(
+        main,
+        [
+            "replay",
+            "--endpoint", "http://localhost:8000",
+            "--model", "test-model",
+            "--scenario", "markdown-note-app",
+            "--repetitions", "3",
+            "--max-concurrent", "3",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0, f"dry-run failed:\n{result.output}"
+    assert "DRY RUN" in result.output
+    assert "Users" not in result.output
