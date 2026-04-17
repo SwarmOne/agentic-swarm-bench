@@ -68,6 +68,23 @@ class DefaultGroup(click.Group):
 console = Console()
 
 
+def _reject_users_flag(value):
+    """Hard-fail any `asb replay --users N` invocation with a migration hint.
+
+    Kept as a hidden flag so the error message is precise instead of Click's
+    generic "no such option". See CHANGELOG for why `--users` was removed.
+    """
+    if value is None:
+        return value
+    raise click.UsageError(
+        "`--users` was removed from `asb replay`: it made every 'user' send "
+        "byte-identical poisoned payloads, so only user 0 did real prefill "
+        "work and users 1..N-1 rode the KV cache for free. "
+        "Use `--repetitions N --max-concurrent N` for N concurrent "
+        "executions, each with a distinct poison seed."
+    )
+
+
 def _require_endpoint_model(cfg_endpoint: str, cfg_model: str) -> None:
     """Raise a clear UsageError if endpoint or model are still unset after config resolution."""
     if not cfg_endpoint:
@@ -506,9 +523,12 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 @click.option(
     "--users",
     "-u",
+    "users_removed",
     type=int,
-    default=1,
-    help="Number of concurrent users per task (default: 1)",
+    default=None,
+    hidden=True,
+    expose_value=True,
+    callback=lambda ctx, param, value: _reject_users_flag(value),
 )
 @click.option(
     "--model-context-length",
@@ -557,7 +577,7 @@ def replay(
     timeout,
     slice_tokens,
     dry_run,
-    users,
+    users_removed,
     model_context_length,
     repetitions,
     max_concurrent,
@@ -585,11 +605,12 @@ def replay(
     \b
     Use --repetitions to run each task N times. Use --policy to control
     execution order (round_robin, sequential, or random). Use
-    --max-concurrent to cap how many tasks run at once.
+    --max-concurrent to cap how many tasks run at once. N concurrent
+    independent users = --repetitions N --max-concurrent N (each
+    repetition gets a distinct poison seed).
 
     \b
-    Use --users to simulate N concurrent users per task. Use
-    --slice-tokens to cap cumulative prompt tokens per task.
+    Use --slice-tokens to cap cumulative prompt tokens per task.
 
     \b
     Examples:
@@ -626,7 +647,6 @@ def replay(
             cfg,
             scenario,
             slice_tokens=slice_tokens,
-            num_users=users,
             model_context_length=model_context_length,
             schedule=sched,
             cache_mode=cache_mode,

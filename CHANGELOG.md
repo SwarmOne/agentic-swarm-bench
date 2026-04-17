@@ -2,6 +2,29 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [3.1.0] - 2026-04-17
+
+### Removed (breaking)
+
+- **`asb replay --users / -u` removed.** The flag was a cache free-ride bug: all N "users" sent byte-identical poisoned payloads concurrently via `asyncio.gather`, so only user 0 did a real cold prefill and users 1..N-1 rode the KV cache for free. This inflated the measured cache hit-rate and made the "N independent users on different projects" story a fiction. The poison mask was seeded by `(task_id, execution_index)` only, with no per-user variation.
+
+### Migration
+
+Use `--repetitions N --max-concurrent N` instead. Each repetition gets a distinct poison seed (`f"{task_id}-exec-{execution_index}"`), so N repetitions produce N genuinely different payloads; `--max-concurrent` caps how many run in parallel. Shared LCP (system prompt) remains cache-eligible across repetitions, matching the realistic "multiple devs, different projects, same system prompt" scenario.
+
+| Old                                  | New                                                  |
+| ------------------------------------ | ---------------------------------------------------- |
+| `asb replay ... --users 8`           | `asb replay ... --repetitions 8 --max-concurrent 8`  |
+| `asb replay ... -u 4 -r 3`           | `asb replay ... --repetitions 12 --max-concurrent 4` |
+
+Passing `--users` to `asb replay` now exits non-zero with a precise migration hint. `asb speed --users` is **unchanged**: that's a synthetic stress test where N identical clients is the intended stimulus.
+
+### Added
+
+- New guard tests in `tests/test_player.py` asserting two repetitions produce different serialized payloads *and* preserve the shared LCP byte-for-byte. These lock in the invariant that `--repetitions` is a correct replacement for the removed `--users`.
+
+---
+
 ## [3.0.0] - 2026-04-16
 
 One-day follow-up to 2.0.0 polishing the CLI surface from launch feedback. Breaking flag renames with a clean 1:1 migration path.

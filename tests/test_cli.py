@@ -114,3 +114,73 @@ def test_replay_cache_mode_in_help(mode):
     result = RUNNER.invoke(main, ["replay", "--help"])
     assert result.exit_code == 0
     assert mode in result.output
+
+
+def test_replay_users_flag_rejected_with_migration_hint():
+    """`--users N` on replay must hard-fail with a message pointing to --repetitions.
+
+    The flag was removed because all N "users" sent byte-identical poisoned
+    payloads, so users 1..N-1 rode the KV cache for free and cache hit-rate
+    was artificially inflated. We keep it hidden just to produce a precise
+    error instead of Click's generic "no such option".
+    """
+    result = RUNNER.invoke(
+        main,
+        [
+            "replay",
+            "--endpoint", "http://localhost:8000",
+            "--model", "test-model",
+            "--scenario", "noop",
+            "--users", "8",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--users" in result.output
+    assert "--repetitions" in result.output
+    assert "--max-concurrent" in result.output
+
+
+def test_replay_users_flag_hidden_from_help():
+    """The deprecated --users flag must not appear in `asb replay --help`."""
+    result = RUNNER.invoke(main, ["replay", "--help"])
+    assert result.exit_code == 0
+    assert "--users" not in result.output
+
+
+def test_replay_repetitions_max_concurrent_dry_run(tmp_path):
+    """--repetitions + --max-concurrent (the new recipe for 'N concurrent users') works.
+
+    Uses an inline scenario file so the test isn't coupled to built-in
+    scenarios that may not be shipped to CI.
+    """
+    import json
+
+    scenario = tmp_path / "scenario.jsonl"
+    scenario.write_text(
+        json.dumps({
+            "seq": 1,
+            "experiment_id": "test",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "messages": [{"role": "user", "content": "hello"}],
+            "model": "test-model",
+            "max_tokens": 100,
+            "stream": True,
+        })
+        + "\n"
+    )
+
+    result = RUNNER.invoke(
+        main,
+        [
+            "replay",
+            "--endpoint", "http://localhost:8000",
+            "--model", "test-model",
+            "--scenario", str(scenario),
+            "--repetitions", "3",
+            "--max-concurrent", "3",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0, f"dry-run failed:\n{result.output}"
+    assert "DRY RUN" in result.output
+    assert "Users" not in result.output
