@@ -645,7 +645,10 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 
 
 @main.command()
-@click.option("--endpoint", "-e", default=None, help="OpenAI-compatible URL (or set ASB_ENDPOINT)")
+@click.option(
+    "--endpoint", "-e", default=None,
+    help="OpenAI-compatible or Anthropic URL (or set ASB_ENDPOINT)",
+)
 @click.option("--model", "-m", default=None, help="Model name (or set ASB_MODEL)")
 @click.option("--api-key", "-k", default="", help="API key")
 @click.option(
@@ -655,11 +658,35 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 )
 @click.option(
     "--scenario",
+    "-s",
     "-w",
     required=True,
-    help="Scenario path: directory with scenario.json, single .jsonl, or built-in name",
+    help="Scenario to replay: scenario JSON file, directory with scenario.json, "
+    "single .jsonl recording, or built-in name.",
+)
+@click.option(
+    "--task",
+    "-t",
+    "task_filter",
+    default=None,
+    help="Replay only this task ID from the scenario (default: all tasks).",
 )
 @click.option("--output", "-o", default=None, help="Save results to file (.md or .json)")
+@click.option(
+    "--json",
+    "json_stdout",
+    is_flag=True,
+    default=False,
+    help="Write JSON results to stdout (human output goes to stderr). "
+    "For piping into other tools.",
+)
+@click.option(
+    "--upstream-api",
+    type=click.Choice(["openai", "anthropic"]),
+    default=None,
+    help="Upstream API format. Auto-detected from URL if not set "
+    "(api.anthropic.com → anthropic, everything else → openai).",
+)
 @click.option(
     "--timeout",
     type=click.FloatRange(min=0.1),
@@ -742,6 +769,10 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
         "allcold (poison everything), allwarm (no poisoning)"
     ),
 )
+@click.option(
+    "--verbose", "-V", is_flag=True,
+    help="Show live per-task progress with phase, request count, and decode tok/s",
+)
 @click.pass_context
 def replay(
     ctx,
@@ -750,7 +781,10 @@ def replay(
     api_key,
     api_key_header,
     scenario,
+    task_filter,
     output,
+    json_stdout,
+    upstream_api,
     timeout,
     slice_tokens,
     dry_run,
@@ -763,43 +797,54 @@ def replay(
     policy,
     seed,
     cache_mode,
+    verbose,
 ):
     """Replay a recorded scenario against any endpoint.
 
     \b
-    Takes a scenario (directory with scenario.json, single JSONL, or
-    built-in name) and replays each task's requests against the target
-    endpoint, measuring TTFT, tok/s, and throughput.
+    A scenario is a JSON file defining tasks, each backed by a JSONL
+    recording.  You can replay the whole scenario or a single task.
+
+    \b
+    Input formats:
+      scenario.json     JSON manifest listing tasks with their recordings
+      directory/        Directory containing scenario.json + .jsonl files
+      session.jsonl     Single recording file (one implicit task)
+      built-in-name     Name of a built-in scenario shipped with asb
+
+    \b
+    Output modes:
+      (default)         Human-readable tables and progress to stdout
+      --json            JSON results to stdout, human output to stderr
+      -o / --output     Save results to file (.md or .json)
+      --json -o FILE    Both: JSON to stdout AND file saved
+
+    \b
+    Upstream API modes:
+      openai (default)  Send as OpenAI /v1/chat/completions (auto-detected)
+      anthropic         Translate recordings to Anthropic Messages API
 
     \b
     Cache modes:
       realistic  Poison the per-user portion of each request (default).
                  Shared prefix is preserved so it can be KV-cached;
                  unique user context is varied to defeat caching there.
-                 This is the most production-realistic measurement.
       allcold    Poison all messages including shared prefix. Every
                  request defeats the cache entirely.
       allwarm    No poisoning. Requests sent as recorded; the server
                  can serve from KV cache freely.
 
     \b
-    Scheduling model (see docs/SCHEDULING.md):
-      - Pre-generates a list of T*R schedule-tasks using --policy.
-      - --max-concurrent J workers pull from the head of the list in
-        parallel. Each worker owns one long-lived httpx client.
-      - N concurrent independent users = --repetitions N --max-concurrent N
-        (each repetition gets a distinct poison seed).
-
-    \b
-    Use --slice-tokens to cap cumulative prompt tokens per task.
-
-    \b
     Examples:
-      asb replay -e http://localhost:8000 -m my-model -w session.jsonl
-      asb replay -e http://localhost:8000 -m my-model -w ./scenarios/my-scenario/
-      asb replay -e URL -m MODEL -w scenario -r 3 --max-concurrent 5 --policy sequential
-      asb replay -e URL -m MODEL -w scenario -r 3 --policy random --seed 42
-      asb replay -e URL -m MODEL -w scenario --cache-mode allwarm
+      asb replay -e URL -m MODEL -w scenario.json
+      asb replay -e URL -m MODEL -w scenario.json --task build-app
+      asb replay -e URL -m MODEL -w scenario.json --json | jq .summary
+      asb replay -e URL -m MODEL -w scenario.json --verbose
+      asb replay -e URL -m MODEL -w session.jsonl
+      asb replay -e URL -m MODEL -w js-coding-opus
+      asb replay -e https://api.anthropic.com -m claude-sonnet-4-20250514 \\
+        -w scenario.json --upstream-api anthropic -k $ANTHROPIC_API_KEY \\
+        --api-key-header x-api-key
     """
     from agentic_swarm_bench.scenarios.player import replay_scenario as _replay_scenario
     from agentic_swarm_bench.scenarios.schedule import Schedule
@@ -832,11 +877,15 @@ def replay(
         _replay_scenario(
             cfg,
             scenario,
+            task_filter=task_filter,
             slice_tokens=slice_tokens,
             model_context_length=model_context_length,
             schedule=sched,
             cache_mode=cache_mode,
             extra_body=merged_extra,
+            json_stdout=json_stdout,
+            verbose=verbose,
+            upstream_api=upstream_api,
         )
     )
 
@@ -875,6 +924,7 @@ def list_scenarios(fmt):
 
     table = Table(title=f"Built-in Scenarios ({len(scenarios)})")
     table.add_column("Name")
+    table.add_column("Model")
     table.add_column("Tasks", justify="right")
     table.add_column("Requests", justify="right")
     table.add_column("Approx Tokens", justify="right")
@@ -882,6 +932,7 @@ def list_scenarios(fmt):
     for s in scenarios:
         table.add_row(
             s.get("name", "?"),
+            s.get("model", "-"),
             str(s.get("tasks", "?")),
             str(s.get("requests", "?")),
             f"{s.get('approx_tokens', 0):,}",

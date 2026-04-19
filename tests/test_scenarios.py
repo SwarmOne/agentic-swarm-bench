@@ -161,6 +161,43 @@ def test_get_scenario_not_found():
 def test_list_builtin_scenarios():
     scenarios = list_builtin_scenarios()
     assert isinstance(scenarios, list)
+    assert len(scenarios) >= 2
+    names = {s["name"] for s in scenarios}
+    assert "js-coding-opus" in names
+    assert "trivial-qa" in names
+
+
+def test_builtin_js_coding_opus():
+    s = get_scenario("js-coding-opus")
+    assert s.name == "js-coding-opus"
+    assert s.model == "claude-opus-4-6"
+    assert len(s.tasks) == 5
+    task_ids = {t.id for t in s.tasks}
+    assert task_ids == {
+        "build-rest-api", "csv-parser-cli", "websocket-chat",
+        "markdown-renderer", "state-machine",
+    }
+    for task in s.tasks:
+        assert task.total_requests >= 2
+        assert len(task.entries[0].messages) >= 2
+
+
+def test_builtin_trivial_qa():
+    s = get_scenario("trivial-qa")
+    assert s.name == "trivial-qa"
+    assert s.model == "claude-opus-4-6"
+    assert len(s.tasks) == 5
+    for task in s.tasks:
+        assert task.total_requests == 1
+        assert len(task.entries[0].messages) == 2
+        assert task.entries[0].messages[0]["role"] == "system"
+        assert task.entries[0].messages[1]["role"] == "user"
+
+
+def test_builtin_js_coding_opus_task_filter():
+    s = get_scenario("js-coding-opus", task_filter="build-rest-api")
+    assert len(s.tasks) == 1
+    assert s.tasks[0].id == "build-rest-api"
 
 
 def test_empty_scenario_file(tmp_path):
@@ -917,3 +954,186 @@ def test_bucket_label_thresholds():
     assert _bucket_label(299_999) == "xl"
     assert _bucket_label(300_000) == "xxl"
     assert _bucket_label(1_000_000) == "xxl"
+
+
+# ---------------------------------------------------------------------------
+# Standalone scenario JSON loading
+# ---------------------------------------------------------------------------
+
+
+def _make_scenario_json(tmp_path, name="test-scenario", tasks=None):
+    """Create a scenario JSON + recording JSONL files, return scenario JSON path."""
+    if tasks is None:
+        tasks = [
+            {"id": "session-a", "name": "Session A", "entries": 3},
+            {"id": "session-b", "name": "Session B", "entries": 2},
+        ]
+
+    task_defs = []
+    for task in tasks:
+        rec_file = f"{task['id']}.jsonl"
+        rec_path = tmp_path / rec_file
+        with open(rec_path, "w") as f:
+            for i in range(task["entries"]):
+                entry = {
+                    "seq": i + 1,
+                    "messages": [
+                        {"role": "system", "content": "System prompt."},
+                        {"role": "user", "content": f"Request {i} for {task['id']}"},
+                    ],
+                    "model": "test-model",
+                    "max_tokens": 512,
+                }
+                f.write(json.dumps(entry) + "\n")
+        task_defs.append({"id": task["id"], "name": task["name"], "recording": rec_file})
+
+    scenario_path = tmp_path / "scenario.json"
+    manifest = {
+        "name": name,
+        "description": f"Test scenario: {name}",
+        "model": "test-model",
+        "tasks": task_defs,
+    }
+    with open(scenario_path, "w") as f:
+        json.dump(manifest, f)
+
+    return scenario_path
+
+
+def test_load_scenario_json_basic(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    scenario = load_scenario(path)
+    assert scenario.name == "test-scenario"
+    assert scenario.description == "Test scenario: test-scenario"
+    assert scenario.model == "test-model"
+    assert len(scenario.tasks) == 2
+    assert scenario.tasks[0].name == "Session A"
+    assert scenario.tasks[1].name == "Session B"
+    assert scenario.total_requests == 5  # 3 + 2
+
+
+def test_load_scenario_json_single_task(tmp_path):
+    path = _make_scenario_json(
+        tmp_path,
+        name="single",
+        tasks=[{"id": "only-task", "name": "Only Task", "entries": 4}],
+    )
+    scenario = load_scenario(path)
+    assert len(scenario.tasks) == 1
+    assert scenario.tasks[0].id == "only-task"
+    assert scenario.total_requests == 4
+
+
+def test_load_scenario_json_missing_file():
+    with pytest.raises(FileNotFoundError, match="Scenario not found"):
+        load_scenario("/does/not/exist/scenario.json")
+
+
+def test_load_scenario_json_missing_recording(tmp_path):
+    scenario_path = tmp_path / "bad.json"
+    manifest = {
+        "name": "bad",
+        "tasks": [{"id": "t1", "recording": "nonexistent.jsonl"}],
+    }
+    with open(scenario_path, "w") as f:
+        json.dump(manifest, f)
+    with pytest.raises(FileNotFoundError, match="Recording not found"):
+        load_scenario(scenario_path)
+
+
+def test_load_scenario_json_relative_paths(tmp_path):
+    sub = tmp_path / "recordings"
+    sub.mkdir()
+    rec_path = sub / "deep.jsonl"
+    rec_path.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+
+    scenario_path = tmp_path / "scenario.json"
+    manifest = {
+        "name": "relative-test",
+        "tasks": [{"id": "deep", "name": "Deep", "recording": "recordings/deep.jsonl"}],
+    }
+    with open(scenario_path, "w") as f:
+        json.dump(manifest, f)
+
+    scenario = load_scenario(scenario_path)
+    assert len(scenario.tasks) == 1
+    assert scenario.tasks[0].name == "Deep"
+    assert scenario.total_requests == 1
+
+
+def test_load_scenario_json_with_explicit_ids(tmp_path):
+    rec_path = tmp_path / "r.jsonl"
+    rec_path.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+
+    scenario_path = tmp_path / "scenario.json"
+    manifest = {
+        "name": "id-test",
+        "tasks": [{"id": "custom-id", "name": "Friendly Name", "recording": "r.jsonl"}],
+    }
+    with open(scenario_path, "w") as f:
+        json.dump(manifest, f)
+
+    scenario = load_scenario(scenario_path)
+    assert scenario.tasks[0].id == "custom-id"
+    assert scenario.tasks[0].name == "Friendly Name"
+
+
+def test_load_scenario_json_empty_tasks(tmp_path):
+    scenario_path = tmp_path / "empty.json"
+    manifest = {"name": "empty", "tasks": []}
+    with open(scenario_path, "w") as f:
+        json.dump(manifest, f)
+
+    scenario = load_scenario(scenario_path)
+    assert len(scenario.tasks) == 0
+    assert scenario.total_requests == 0
+
+
+def test_load_scenario_json_preserves_path(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    scenario = load_scenario(path)
+    assert scenario.path == str(path)
+
+
+def test_load_scenario_json_preserves_model(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    scenario = load_scenario(path)
+    assert scenario.model == "test-model"
+    summary = scenario.summary()
+    assert summary["model"] == "test-model"
+
+
+# ---------------------------------------------------------------------------
+# Task filter (--task flag)
+# ---------------------------------------------------------------------------
+
+
+def test_get_scenario_with_task_filter(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    scenario = get_scenario(str(path), task_filter="session-a")
+    assert len(scenario.tasks) == 1
+    assert scenario.tasks[0].id == "session-a"
+    assert scenario.total_requests == 3
+
+
+def test_get_scenario_task_filter_not_found(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    with pytest.raises(FileNotFoundError, match="Task 'nonexistent'"):
+        get_scenario(str(path), task_filter="nonexistent")
+
+
+def test_get_scenario_task_filter_from_directory(tmp_path):
+    scenario_dir = _make_scenario_dir(tmp_path)
+    scenario = get_scenario(str(scenario_dir), task_filter="task-0")
+    assert len(scenario.tasks) == 1
+    assert scenario.tasks[0].id == "task-0"
+
+
+def test_get_scenario_no_filter_returns_all(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    scenario = get_scenario(str(path))
+    assert len(scenario.tasks) == 2
