@@ -2,6 +2,36 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [3.4.0] - 2026-04-19
+
+### Summary
+
+Ships two built-in scenarios (`trivial-qa` and `js-coding-opus`) so users can benchmark immediately without recording anything first. Also adds native Anthropic Messages API support to the replay command, a `--task` filter for replaying individual tasks, `--json` stdout mode for piping into other tools, and `--verbose` live progress output.
+
+### Added
+
+- **Built-in `trivial-qa` scenario.** Five trivial single-turn Q&A tasks (~20 tokens each) — a 30-second smoke test that verifies endpoint connectivity and reports baseline TTFT and tok/s.
+- **Built-in `js-coding-opus` scenario.** Five multi-turn JavaScript coding sessions (REST API, CSV parser CLI, markdown renderer, state machine, WebSocket chat) recorded with Claude Opus 4.6. Each task has 4 turns with context growing from ~1K to ~40K chars.
+- **`--scenario` short flag `-s`.** Replay now accepts `-s` as a shorthand for `--scenario` (the legacy `-w` alias is preserved).
+- **`--task` / `-t` filter on `asb replay`.** Replay a single task from a multi-task scenario by ID instead of the entire scenario.
+- **`--json` flag on `asb replay`.** Writes JSON results to stdout (human-readable output moves to stderr) for piping into `jq`, CI scripts, or other tools.
+- **`--upstream-api` flag on `asb replay`.** Explicitly select `openai` or `anthropic` API format. Auto-detected from URL when omitted (api.anthropic.com → anthropic).
+- **Native Anthropic Messages API support.** Replay can now send requests directly to Anthropic endpoints, translating recorded OpenAI-format conversations to the Anthropic Messages API format on the fly.
+- **`--verbose` / `-V` flag on `asb replay`.** Shows live per-task progress with phase, request count, and decode tok/s.
+- **`asb list-scenarios` shows built-in scenarios.** Registry now discovers and lists all built-in scenarios shipped with the package.
+- **Quick smoke test in README.** New "Quick smoke test (30 seconds)" section right after installation with copy-paste commands.
+
+### Changed
+
+- **Replay help text reorganized.** Documented input formats (scenario.json, directory, .jsonl, built-in name), output modes (default, --json, -o, --json -o), and upstream API modes in structured `\b` blocks.
+- **README updated.** New "Built-in Scenarios" section with table, CLI examples, and scenario descriptions. All `-w` flags in examples updated to `--scenario`. Architecture tree updated with `trivial-qa/` and `js-coding-opus/` entries.
+
+### Removed
+
+- **`recordings/` directory and `markdown-note-app` scenario.** Replaced by the new built-in scenario system under `scenarios/data/`.
+
+---
+
 ## [3.3.0] - 2026-04-17
 
 ### Summary
