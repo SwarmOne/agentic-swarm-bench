@@ -13,6 +13,7 @@ from agentic_swarm_bench.scenarios.player import (
     _estimate_tokens,
     _replay_one_request,
     _slice_entries,
+    _strip_cache_control,
 )
 from agentic_swarm_bench.scenarios.poison import (
     _serialize_messages,
@@ -644,3 +645,62 @@ def test_repetitions_preserve_shared_lcp():
     text_b = _serialize_messages(poisoned_b.entries[0].messages)
 
     assert text_a[:lcp_len] == text_b[:lcp_len]
+
+
+# ---------------------------------------------------------------------------
+# _strip_cache_control
+# ---------------------------------------------------------------------------
+
+
+class TestStripCacheControl:
+    """Stripping cache_control from serialized content blocks."""
+
+    def test_string_dict_with_cache_control(self):
+        content = json.dumps({
+            "tool_use_id": "abc",
+            "content": "result",
+            "cache_control": {"type": "ephemeral"},
+        })
+        result = _strip_cache_control(content)
+        parsed = json.loads(result)
+        assert "cache_control" not in parsed
+        assert parsed["tool_use_id"] == "abc"
+        assert parsed["content"] == "result"
+
+    def test_string_list_with_cache_control(self):
+        content = json.dumps([
+            {"type": "text", "text": "hello"},
+            {"type": "tool_result", "cache_control": {"type": "ephemeral"}},
+        ])
+        result = _strip_cache_control(content)
+        parsed = json.loads(result)
+        assert len(parsed) == 2
+        assert "cache_control" not in parsed[0]
+        assert "cache_control" not in parsed[1]
+
+    def test_list_content_with_cache_control(self):
+        content = [
+            {"type": "text", "text": "hello"},
+            {"type": "tool_result", "cache_control": {"type": "ephemeral"}},
+        ]
+        result = _strip_cache_control(content)
+        assert isinstance(result, list)
+        assert "cache_control" not in result[0]
+        assert "cache_control" not in result[1]
+
+    def test_plain_string_unchanged(self):
+        assert _strip_cache_control("hello world") == "hello world"
+
+    def test_empty_string_unchanged(self):
+        assert _strip_cache_control("") == ""
+
+    def test_string_without_cache_control_unchanged(self):
+        content = json.dumps({"tool_use_id": "abc", "content": "result"})
+        assert _strip_cache_control(content) == content
+
+    def test_non_json_string_with_keyword_unchanged(self):
+        content = 'this mentions "cache_control" but is not JSON'
+        assert _strip_cache_control(content) == content
+
+    def test_none_passthrough(self):
+        assert _strip_cache_control(None) is None

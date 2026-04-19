@@ -85,6 +85,7 @@ class Scenario:
     description: str = ""
     path: str = ""
     model: str = ""
+    min_lcp_length: int | None = None
     tasks: list[Task] = field(default_factory=list)
 
     @property
@@ -195,6 +196,7 @@ def _load_scenario_dir(directory: Path) -> Scenario:
         description=manifest.get("description", ""),
         path=str(directory),
         model=manifest.get("model", ""),
+        min_lcp_length=manifest.get("min_lcp_length"),
         tasks=tasks,
     )
 
@@ -222,32 +224,61 @@ def list_builtin_scenarios() -> list[dict]:
     scenarios: list[dict] = []
 
     for item in sorted(BUILTIN_DIR.iterdir()):
-        if item.is_dir() and (item / "scenario.json").exists():
-            try:
-                s = load_scenario(item)
-                scenarios.append(s.summary())
-            except Exception:
-                scenarios.append(
-                    {
-                        "name": item.name,
-                        "path": str(item),
-                        "error": "Failed to load",
-                    }
-                )
+        if item.is_dir():
+            if (item / "scenario.json").exists():
+                _try_load_builtin(scenarios, item, item.name)
+            for json_file in sorted(item.glob("*.json")):
+                if json_file.name == "scenario.json":
+                    continue
+                _try_load_builtin(scenarios, json_file, f"{item.name}/{json_file.stem}")
         elif item.suffix == ".jsonl":
-            try:
-                s = load_scenario(item)
-                scenarios.append(s.summary())
-            except Exception:
-                scenarios.append(
-                    {
-                        "name": item.stem,
-                        "path": str(item),
-                        "error": "Failed to load",
-                    }
-                )
+            _try_load_builtin(scenarios, item, item.stem)
 
     return scenarios
+
+
+def _try_load_builtin(out: list[dict], path: Path, fallback_name: str) -> None:
+    """Try to load a scenario and append its summary (or an error stub)."""
+    try:
+        s = load_scenario(path)
+        out.append(s.summary())
+    except Exception:
+        out.append({"name": fallback_name, "path": str(path), "error": "Failed to load"})
+
+
+def _resolve_builtin(name_or_path: str) -> Scenario:
+    """Resolve a built-in scenario by name.
+
+    Resolution order:
+      1. ``data/<name>/`` directory with ``scenario.json``
+      2. ``data/<name>.jsonl`` single-recording file
+      3. ``data/<name>.json`` standalone manifest file
+      4. ``data/<name>`` as a literal file (e.g. ``mydir/full.json``)
+
+    Steps 3-4 allow multiple manifests per directory, e.g.
+    ``-s js-coding-opus/full`` resolves to ``data/js-coding-opus/full.json``.
+    """
+    builtin_dir = BUILTIN_DIR / name_or_path
+    if builtin_dir.is_dir() and (builtin_dir / "scenario.json").exists():
+        return load_scenario(builtin_dir)
+
+    builtin_jsonl = BUILTIN_DIR / f"{name_or_path}.jsonl"
+    if builtin_jsonl.is_file():
+        return load_scenario(builtin_jsonl)
+
+    builtin_json = BUILTIN_DIR / f"{name_or_path}.json"
+    if builtin_json.is_file():
+        return load_scenario(builtin_json)
+
+    builtin_literal = BUILTIN_DIR / name_or_path
+    if builtin_literal.is_file():
+        return load_scenario(builtin_literal)
+
+    raise FileNotFoundError(
+        f"Scenario '{name_or_path}' not found. "
+        f"Provide a path to a scenario JSON, a .jsonl recording, "
+        f"a scenario directory, or a built-in scenario name."
+    )
 
 
 def get_scenario(name_or_path: str, *, task_filter: str | None = None) -> Scenario:
@@ -261,17 +292,7 @@ def get_scenario(name_or_path: str, *, task_filter: str | None = None) -> Scenar
     if p.exists():
         scenario = load_scenario(p)
     else:
-        builtin_dir = BUILTIN_DIR / name_or_path
-        if builtin_dir.is_dir() and (builtin_dir / "scenario.json").exists():
-            scenario = load_scenario(builtin_dir)
-        elif (BUILTIN_DIR / f"{name_or_path}.jsonl").exists():
-            scenario = load_scenario(BUILTIN_DIR / f"{name_or_path}.jsonl")
-        else:
-            raise FileNotFoundError(
-                f"Scenario '{name_or_path}' not found. "
-                f"Provide a path to a scenario JSON, a .jsonl recording, "
-                f"a scenario directory, or a built-in scenario name."
-            )
+        scenario = _resolve_builtin(name_or_path)
 
     if task_filter is not None:
         matched = [t for t in scenario.tasks if t.id == task_filter]
@@ -286,6 +307,7 @@ def get_scenario(name_or_path: str, *, task_filter: str | None = None) -> Scenar
             description=scenario.description,
             path=scenario.path,
             model=scenario.model,
+            min_lcp_length=scenario.min_lcp_length,
             tasks=matched,
         )
 
@@ -340,5 +362,6 @@ def _load_scenario_json_file(path: Path) -> Scenario:
         description=manifest.get("description", ""),
         path=str(path),
         model=manifest.get("model", ""),
+        min_lcp_length=manifest.get("min_lcp_length"),
         tasks=tasks,
     )

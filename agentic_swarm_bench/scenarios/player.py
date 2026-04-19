@@ -94,6 +94,36 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4) if text else 0
 
 
+def _strip_cache_control(content):
+    """Strip ``cache_control`` from serialized content blocks.
+
+    Claude Code recordings serialize Anthropic content blocks as JSON
+    strings.  ``cache_control`` is a recording artifact -- in live sessions
+    it's a sibling field on the block object, not inside the content
+    string.  Leaving it in causes prefix divergence between requests
+    because the same logical message gets different tokens depending on
+    whether it was the last user message when recorded.
+    """
+    if isinstance(content, str) and '"cache_control"' in content:
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                parsed.pop("cache_control", None)
+                return json.dumps(parsed)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict):
+                        item.pop("cache_control", None)
+                return json.dumps(parsed)
+        except json.JSONDecodeError:
+            pass
+    elif isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict):
+                item.pop("cache_control", None)
+    return content
+
+
 async def _replay_one_request(
     client: httpx.AsyncClient,
     url: str,
@@ -305,7 +335,7 @@ async def _replay_one_request_anthropic(
             system_parts.append(msg.get("content", ""))
         else:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            content = _strip_cache_control(msg.get("content", ""))
             conversation.append({"role": role, "content": content})
 
     if not conversation:
@@ -626,6 +656,12 @@ async def replay_scenario(
 
     if cache_mode == "realistic":
         lcp_len = compute_scenario_lcp(sliced_tasks)
+        if scenario.min_lcp_length is not None and lcp_len < scenario.min_lcp_length:
+            raise ValueError(
+                f"Computed LCP ({lcp_len} chars) is below scenario minimum "
+                f"({scenario.min_lcp_length} chars). Tasks may not share enough "
+                f"common prefix for realistic cache simulation."
+            )
         execution_queue = [
             (poison_task_execution(task, lcp_len, exec_idx), exec_idx)
             for task, exec_idx in raw_queue
