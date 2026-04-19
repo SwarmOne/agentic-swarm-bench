@@ -6,7 +6,7 @@ All notable changes to AgenticSwarmBench are documented here.
 
 ### Summary
 
-All default output — CLI tables, markdown reports, and JSON summaries — now surfaces **both decode tok/s and prefill tok/s** with explicit labels. Previously only one throughput number was shown (generically labeled "Tok/s"), making it unclear whether the metric measured decode-phase streaming speed or prefill-phase input processing rate. Both are now reported side-by-side everywhere.
+All default output - CLI tables, markdown reports, and JSON summaries - now surfaces **both decode tok/s and prefill tok/s** with explicit labels. Previously only one throughput number was shown (generically labeled "Tok/s"), making it unclear whether the metric measured decode-phase streaming speed or prefill-phase input processing rate. Both are now reported side-by-side everywhere.
 
 ### Added
 
@@ -30,10 +30,10 @@ Makes the work-queue scheduling model explicit everywhere and plugs the two rand
 ### Added
 
 - **`--seed` flag on `asb replay` and `asb agent`.** Pass an integer to make `--policy random` reproducible across runs; the same seed yields the same shuffled order. Omit it for system entropy. When set, the seed is echoed in the dry-run and schedule summary output so it's visible in logs.
-- **Full scheduling controls on `asb agent`.** Previously the agent command had no scheduling surface; tasks always ran sequentially, once each, one-at-a-time. Now accepts `--repetitions`, `--max-concurrent`, `--policy`, `--seed`, `--timeout` — mirroring the `replay` shape.
+- **Full scheduling controls on `asb agent`.** Previously the agent command had no scheduling surface; tasks always ran sequentially, once each, one-at-a-time. Now accepts `--repetitions`, `--max-concurrent`, `--policy`, `--seed`, `--timeout` - mirroring the `replay` shape.
 - **`run_work_queue` primitive** in `agentic_swarm_bench.scenarios.schedule`. One function that both replay and agent dispatch through: literal pool of J async workers pulling from the head of a `collections.deque` until drained. Replaces the `asyncio.gather + Semaphore(J)` pattern which was semantically correct but read nothing like the work-queue model we were describing in the docs.
 - **`Schedule.seed` field.** Bundled into the dataclass so callers don't need to thread a separate seed parameter through every helper.
-- **`docs/SCHEDULING.md`** — authoritative reference for the schedule-task concept, the three orderings (sequential, round_robin, random), the pool-of-J dispatcher, and a worked example. CLI docstrings link here.
+- **`docs/SCHEDULING.md`** - authoritative reference for the schedule-task concept, the three orderings (sequential, round_robin, random), the pool-of-J dispatcher, and a worked example. CLI docstrings link here.
 - **Tests:** 13 new tests covering `run_work_queue` order preservation, concurrency bound, slot_id assignment, drain-despite-slow-item, J > queue_length, schedule-task round-trip, and seed reproducibility (both via argument and `Schedule.seed`).
 
 ### Changed
@@ -50,11 +50,11 @@ Makes the work-queue scheduling model explicit everywhere and plugs the two rand
 
 ### Migration
 
-| Old                                         | New                                                              |
-| ------------------------------------------- | ---------------------------------------------------------------- |
-| `asb agent -t p1-p10`                       | `asb agent -t p1-p10` (now random by default; add `--policy sequential` for old behavior) |
-| `asb agent -t p1-p10` (rerun for reps)      | `asb agent -t p1-p10 -r 4 --max-concurrent 4`                    |
-| `asb replay … --policy random`              | `asb replay … --policy random --seed N` (for reproducibility)    |
+| Old                                    | New                                                                                       |
+| -------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `asb agent -t p1-p10`                  | `asb agent -t p1-p10` (now random by default; add `--policy sequential` for old behavior) |
+| `asb agent -t p1-p10` (rerun for reps) | `asb agent -t p1-p10 -r 4 --max-concurrent 4`                                             |
+| `asb replay … --policy random`         | `asb replay … --policy random --seed N` (for reproducibility)                             |
 
 ---
 
@@ -68,16 +68,16 @@ Makes the work-queue scheduling model explicit everywhere and plugs the two rand
 
 Use `--repetitions N --max-concurrent N` instead. Each repetition gets a distinct poison seed (`f"{task_id}-exec-{execution_index}"`), so N repetitions produce N genuinely different payloads; `--max-concurrent` caps how many run in parallel. Shared LCP (system prompt) remains cache-eligible across repetitions, matching the realistic "multiple devs, different projects, same system prompt" scenario.
 
-| Old                                  | New                                                  |
-| ------------------------------------ | ---------------------------------------------------- |
-| `asb replay ... --users 8`           | `asb replay ... --repetitions 8 --max-concurrent 8`  |
-| `asb replay ... -u 4 -r 3`           | `asb replay ... --repetitions 12 --max-concurrent 4` |
+| Old                        | New                                                  |
+| -------------------------- | ---------------------------------------------------- |
+| `asb replay ... --users 8` | `asb replay ... --repetitions 8 --max-concurrent 8`  |
+| `asb replay ... -u 4 -r 3` | `asb replay ... --repetitions 12 --max-concurrent 4` |
 
 Passing `--users` to `asb replay` now exits non-zero with a precise migration hint. `asb speed --users` is **unchanged**: that's a synthetic stress test where N identical clients is the intended stimulus.
 
 ### Added
 
-- New guard tests in `tests/test_player.py` asserting two repetitions produce different serialized payloads *and* preserve the shared LCP byte-for-byte. These lock in the invariant that `--repetitions` is a correct replacement for the removed `--users`.
+- New guard tests in `tests/test_player.py` asserting two repetitions produce different serialized payloads _and_ preserve the shared LCP byte-for-byte. These lock in the invariant that `--repetitions` is a correct replacement for the removed `--users`.
 
 ---
 
