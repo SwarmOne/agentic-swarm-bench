@@ -2,6 +2,19 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [3.4.1] - 2026-04-19
+
+### Fixed
+
+- **Prefix cache divergence from `cache_control` in recordings.** Claude Code recordings embed `cache_control: {"type": "ephemeral"}` inside serialized JSON content strings on the last user message. On the next request the same message lacks it, producing different tokens and breaking KV prefix cache matching. The Anthropic replay path now strips `cache_control` from content before sending, so the same logical message always produces identical tokens.
+
+### Added
+
+- **`min_lcp_length` field in scenario manifests.** Optional integer that declares the minimum expected LCP (longest common prefix) across tasks. Validated at replay time when `cache_mode == "realistic"` — raises `ValueError` if the computed LCP falls below the threshold. Guards against scenarios where tasks accidentally don't share enough system prompt for realistic cache simulation. Added `"min_lcp_length": 20000` to `js-coding-opus`.
+- **Multi-manifest built-in resolution.** `-s js-coding-opus/full` now resolves to `data/js-coding-opus/full.json`, allowing `full.json` and `small.json` side-by-side in one scenario directory. `list_builtin_scenarios` discovers extra `.json` manifests. Backward compatible — directories with `scenario.json` still take priority.
+
+---
+
 ## [3.4.0] - 2026-04-19
 
 ### Summary
