@@ -1,0 +1,1 @@
+{"seq": 1, "experiment_id": "trivial_speed-of", "timestamp": "2026-04-18T00:00:00+00:00", "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "What is the speed of light in meters per second?"}], "model": "claude-opus-4-6", "max_tokens": 256, "temperature": 1.0, "stream": true, "prompt_tokens": 20}

@@ -10,9 +10,9 @@ build/
 venv/
 .env
 *.jsonl
-!recordings/*.jsonl
+!agentic_swarm_bench/scenarios/data/**/*.jsonl
 results/
-markdown-note-app-*
+js-coding-opus-*
 traces/
 workspaces/
 .DS_Store
@@ -27,5 +27,3 @@ LAUNCH.md
 LAUNCH*.md
 *_launch*.md
 cursor_*.md
-demo.tape
-assets/demo_fast.gifassets/demo_fast.gif

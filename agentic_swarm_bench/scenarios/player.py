@@ -1,8 +1,8 @@
-"""Replay recorded scenarios against any OpenAI-compatible endpoint.
+"""Replay recorded scenarios against any endpoint (OpenAI or Anthropic).
 
-Takes a scenario (directory with manifest or single JSONL) and replays
-each task's requests against a target endpoint, collecting the same
-metrics as ``asb speed``.
+Takes a scenario (JSON manifest with tasks, directory, or single JSONL
+recording) and replays each task's requests against a target endpoint,
+collecting the same metrics as ``asb speed``.
 
 Scheduling model (see docs/SCHEDULING.md):
   - A scenario has T tasks; each replay runs every task R times.
@@ -12,8 +12,12 @@ Scheduling model (see docs/SCHEDULING.md):
     all T*R schedule-tasks.
   - Dispatch is a literal pool of J long-lived workers, each owning one
     persistent httpx.AsyncClient and pulling the next head of L whenever
-    it finishes its current schedule-task. No worker ever stalls waiting
-    for a batch peer. This is what a real production load looks like.
+    it finishes its current schedule-task.
+
+Upstream API modes:
+  openai     Send requests as OpenAI /v1/chat/completions (default).
+  anthropic  Translate recorded OpenAI messages to Anthropic Messages API
+             format, stream via /v1/messages, and parse Anthropic SSE.
 
 Cache modes:
   realistic  Poison only the non-shared portion of each request. The LCP
@@ -30,13 +34,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 from rich.console import Console
+from rich.live import Live
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.table import Table
 
 from agentic_swarm_bench.config import BenchmarkConfig, resolve_endpoint
 from agentic_swarm_bench.metrics.collector import (
@@ -62,8 +70,17 @@ from agentic_swarm_bench.scenarios.schedule import (
 console = Console()
 
 
-def _build_headers(config: BenchmarkConfig) -> dict:
+def _build_headers(config: BenchmarkConfig, upstream_api: str = "openai") -> dict:
     headers = {"Content-Type": "application/json"}
+    if upstream_api == "anthropic":
+        headers["anthropic-version"] = "2023-06-01"
+        if config.api_key:
+            if config.api_key_header.lower() == "authorization":
+                headers["x-api-key"] = config.api_key
+            else:
+                headers[config.api_key_header] = config.api_key
+        return headers
+
     if not config.api_key:
         return headers
     if config.api_key_header.lower() == "authorization":
@@ -90,14 +107,34 @@ async def _replay_one_request(
     on_complete=None,
     max_retries: int = 0,
     extra_body: dict | None = None,
+    upstream_api: str = "openai",
 ) -> RequestMetrics:
-    """Replay a single recorded request and collect timing metrics."""
+    """Replay a single recorded request and collect timing metrics.
+
+    When *upstream_api* is ``"anthropic"``, the recorded OpenAI messages are
+    translated to Anthropic Messages API format and streamed via ``/v1/messages``.
+    """
     metrics = RequestMetrics(
         request_id=seq,
         user_id=user_id,
         task_id=f"replay-{seq}",
         context_tokens=sum(len(m.get("content", "")) for m in messages) // 4,
     )
+
+    if upstream_api == "anthropic":
+        return await _replay_one_request_anthropic(
+            client=client,
+            url=url,
+            model=model,
+            headers=headers,
+            messages=messages,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            metrics=metrics,
+            on_complete=on_complete,
+            max_retries=max_retries,
+            extra_body=extra_body,
+        )
 
     capped_tokens = min(max_tokens, 4096)
     token_limit_key = "max_completion_tokens" if "api.openai.com" in url else "max_tokens"
@@ -243,6 +280,171 @@ async def _replay_one_request(
     return metrics
 
 
+async def _replay_one_request_anthropic(
+    client: httpx.AsyncClient,
+    url: str,
+    model: str,
+    headers: dict,
+    messages: list[dict],
+    max_tokens: int,
+    timeout: float,
+    metrics: RequestMetrics,
+    on_complete=None,
+    max_retries: int = 0,
+    extra_body: dict | None = None,
+) -> RequestMetrics:
+    """Replay a single request via Anthropic Messages API.
+
+    Translates the recorded OpenAI messages into Anthropic format, streams
+    the response from /v1/messages, and parses Anthropic SSE events.
+    """
+    system_parts: list[str] = []
+    conversation: list[dict] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_parts.append(msg.get("content", ""))
+        else:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            conversation.append({"role": role, "content": content})
+
+    if not conversation:
+        conversation.append({"role": "user", "content": ""})
+
+    capped_tokens = min(max_tokens, 4096)
+    payload: dict = {
+        "model": model,
+        "messages": conversation,
+        "max_tokens": capped_tokens,
+        "stream": True,
+    }
+    if system_parts:
+        payload["system"] = "\n".join(system_parts)
+    if extra_body:
+        payload.update(extra_body)
+
+    anthropic_url = url.rstrip("/")
+    if not anthropic_url.endswith("/v1/messages"):
+        anthropic_url += "/v1/messages"
+
+    def _parse_sse_line(line: str):
+        """Parse one SSE data line, updating nonlocal metrics state."""
+        nonlocal first_token_time, last_token_time, token_count
+
+        if not line.startswith("data: "):
+            return
+        data_str = line[6:].strip()
+        try:
+            data_obj = json.loads(data_str)
+        except json.JSONDecodeError:
+            return
+
+        event_type = data_obj.get("type", "")
+
+        if event_type == "message_start":
+            msg = data_obj.get("message", {})
+            usage = msg.get("usage", {})
+            metrics.prompt_tokens = (
+                usage.get("input_tokens", 0)
+                + usage.get("cache_read_input_tokens", 0)
+                + usage.get("cache_creation_input_tokens", 0)
+            )
+
+        elif event_type == "content_block_delta":
+            delta = data_obj.get("delta", {})
+            text = None
+            if delta.get("type") == "text_delta":
+                text = delta.get("text")
+            elif delta.get("type") == "thinking_delta":
+                text = delta.get("thinking")
+            if text:
+                now = time.perf_counter()
+                chunk_tokens = _estimate_tokens(text)
+                if first_token_time is None:
+                    first_token_time = now
+                    metrics.ttft_ms = (now - start) * 1000
+                else:
+                    metrics.itl_ms.append((now - last_token_time) * 1000)
+                last_token_time = now
+                token_count += chunk_tokens
+
+        elif event_type == "message_delta":
+            usage = data_obj.get("usage", {})
+            if usage.get("output_tokens"):
+                token_count = usage["output_tokens"]
+
+    for attempt in range(max_retries + 1):
+        start = time.perf_counter()
+        first_token_time = None
+        last_token_time = start
+        token_count = 0
+        metrics.itl_ms = []
+        metrics.error = None
+
+        async def _do_stream():
+            async with client.stream(
+                "POST", anthropic_url, json=payload, headers=headers, timeout=timeout
+            ) as resp:
+                if resp.status_code == 429:
+                    body = await resp.aread()
+                    metrics.error = f"HTTP 429: {body.decode()[:500]}"
+                    return
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    metrics.error = f"HTTP {resp.status_code}: {body.decode()[:500]}"
+                    return
+
+                buf = b""
+                async for chunk_bytes in resp.aiter_bytes():
+                    buf += chunk_bytes
+                    while b"\n" in buf:
+                        raw_line, buf = buf.split(b"\n", 1)
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        _parse_sse_line(line)
+
+                if buf:
+                    line = buf.decode("utf-8", errors="replace").strip()
+                    _parse_sse_line(line)
+
+        try:
+            await asyncio.wait_for(_do_stream(), timeout=timeout)
+        except asyncio.TimeoutError:
+            metrics.error = f"Wall-clock timeout after {timeout}s"
+            if on_complete:
+                on_complete()
+            return metrics
+        except Exception as e:
+            metrics.error = f"{type(e).__name__}: {str(e)[:500]}"
+            if on_complete:
+                on_complete()
+            return metrics
+
+        if metrics.error and attempt < max_retries:
+            if metrics.error.startswith("HTTP 429"):
+                backoff = 2 + attempt * 3
+                await asyncio.sleep(backoff)
+                continue
+        break
+
+    end = time.perf_counter()
+    metrics.total_time_s = end - start
+    metrics.completion_tokens = token_count
+
+    if token_count > 0 and first_token_time is not None:
+        metrics.decode_time_s = end - first_token_time
+        if metrics.decode_time_s > 0:
+            metrics.tok_per_sec = token_count / metrics.decode_time_s
+
+    if metrics.ttft_ms and metrics.ttft_ms > 0 and metrics.prompt_tokens > 0:
+        metrics.prefill_tok_per_sec = metrics.prompt_tokens / (metrics.ttft_ms / 1000)
+    elif metrics.ttft_ms and metrics.ttft_ms > 0 and metrics.context_tokens > 0:
+        metrics.prefill_tok_per_sec = metrics.context_tokens / (metrics.ttft_ms / 1000)
+
+    if on_complete:
+        on_complete()
+    return metrics
+
+
 def _bucket_label(tokens: int) -> str:
     if tokens < 10_000:
         return "fresh"
@@ -330,6 +532,7 @@ async def _replay_task_entries(
     on_complete=None,
     model_context_length: int | None = None,
     extra_body: dict | None = None,
+    upstream_api: str = "openai",
 ) -> list[RequestMetrics]:
     """Replay one task's entries sequentially, returning all metrics."""
     results: list[RequestMetrics] = []
@@ -354,6 +557,7 @@ async def _replay_task_entries(
             user_id=user_id,
             on_complete=on_complete,
             extra_body=extra_body,
+            upstream_api=upstream_api,
         )
         m.context_profile = _bucket_label(tokens)
         m.context_tokens = tokens
@@ -365,26 +569,54 @@ async def replay_scenario(
     config: BenchmarkConfig,
     scenario_path: str,
     *,
+    task_filter: str | None = None,
     slice_tokens: int | None = None,
     model_context_length: int | None = None,
     schedule: Schedule | None = None,
     cache_mode: str = "realistic",
     extra_body: dict | None = None,
+    json_stdout: bool = False,
+    verbose: bool = False,
+    upstream_api: str | None = None,
 ) -> BenchmarkRun:
     """Replay a recorded scenario against the configured endpoint.
+
+    task_filter:
+      Replay only the task whose ``id`` matches (default: all tasks).
+
+    upstream_api:
+      ``"openai"`` (default) or ``"anthropic"``. When ``"anthropic"``, recorded
+      OpenAI messages are translated to Anthropic Messages API format and sent
+      to ``/v1/messages``. Auto-detected from endpoint URL when not set.
+
+    json_stdout:
+      When True, all human-readable output goes to stderr and the final
+      BenchmarkRun JSON is written to stdout for piping / machine consumption.
+
+    verbose:
+      When True, show live-updating per-task progress lines with
+      phase (prefill/decode), request counts, and decode tok/s.
 
     cache_mode:
       realistic  Preserve shared LCP, poison divergent per-user portion (default).
       allcold    Poison everything (lcp_len=0), every request defeats the cache.
       allwarm    No poisoning, requests sent as recorded.
     """
-    scenario = get_scenario(scenario_path)
+    con = Console(stderr=True) if json_stdout else console
+
+    from agentic_swarm_bench.proxy.utils import _detect_upstream_api
+    effective_api = _detect_upstream_api(config.endpoint, upstream_api)
+
+    scenario = get_scenario(scenario_path, task_filter=task_filter)
 
     if schedule is None:
         schedule = Schedule()
 
-    url = resolve_endpoint(config.endpoint)
-    headers = _build_headers(config)
+    if effective_api == "anthropic":
+        url = config.endpoint.rstrip("/")
+    else:
+        url = resolve_endpoint(config.endpoint)
+    headers = _build_headers(config, upstream_api=effective_api)
 
     sliced_tasks = _apply_slice_to_tasks(scenario.tasks, slice_tokens)
     raw_queue = build_execution_queue(sliced_tasks, schedule)
@@ -408,33 +640,42 @@ async def replay_scenario(
 
     total_task_executions = len(execution_queue)
     total_entries = sum(t.total_requests for t, _exec_idx in execution_queue)
+    task_word = "task" if len(scenario.tasks) == 1 else "tasks"
 
-    console.print("\n[bold]AgenticSwarmBench -- replay[/bold]")
-    console.print(f"  Endpoint: {config.endpoint}")
-    console.print(f"  Model: {config.model}")
-    console.print(
+    con.print("\n[bold]AgenticSwarmBench -- replay[/bold]")
+    con.print(f"  Endpoint: {config.endpoint}")
+    con.print(f"  Model: {config.model}")
+    if effective_api == "anthropic":
+        con.print("  Upstream API: [bold magenta]anthropic[/bold magenta] (Messages API)")
+    con.print(
         f"  Scenario: {scenario.name}"
-        f" ({len(scenario.tasks)} task(s), {scenario.total_requests} requests)"
+        f" ({len(scenario.tasks)} {task_word}, {scenario.total_requests} requests)"
     )
+    if task_filter:
+        con.print(f"  Task filter: {task_filter}")
     if total_task_executions != len(scenario.tasks):
-        console.print(_schedule_line(schedule))
-        console.print(f"  Total executions: {total_task_executions} tasks")
+        con.print(_schedule_line(schedule))
+        con.print(f"  Total executions: {total_task_executions} tasks")
     cache_mode_labels = {
         "realistic": "[yellow]realistic[/yellow] (shared prefix cached, unique context poisoned)",
         "allcold": "[red]allcold[/red] (all requests defeat cache)",
         "allwarm": "[green]allwarm[/green] (no poisoning, cache allowed)",
     }
-    console.print(f"  Cache mode: {cache_mode_labels.get(cache_mode, cache_mode)}")
+    con.print(f"  Cache mode: {cache_mode_labels.get(cache_mode, cache_mode)}")
     if slice_tokens is not None:
-        console.print(f"  Slice: ≤{slice_tokens:,} prompt tokens per task")
+        con.print(f"  Slice: ≤{slice_tokens:,} prompt tokens per recording")
     if model_context_length is not None:
-        console.print(f"  Model context length: {model_context_length:,} tokens")
-    console.print(f"  Approx tokens: {scenario.total_tokens_approx:,} per scenario")
-    console.rule()
+        con.print(f"  Model context length: {model_context_length:,} tokens")
+    con.print(f"  Approx tokens: {scenario.total_tokens_approx:,} per scenario")
+    con.rule()
 
     if config.dry_run:
-        _print_replay_dry_run(scenario, url, schedule)
-        return BenchmarkRun(model=config.model, endpoint=config.endpoint)
+        _print_replay_dry_run(scenario, url, schedule, con=con)
+        dry_run = BenchmarkRun(model=config.model, endpoint=config.endpoint)
+        if json_stdout:
+            sys.stdout.write(json.dumps(dry_run.to_dict(), indent=2))
+            sys.stdout.write("\n")
+        return dry_run
 
     run = BenchmarkRun(
         model=config.model,
@@ -449,51 +690,36 @@ async def replay_scenario(
     # which matters for prefix-cache measurements.
     j = max(1, min(schedule.max_concurrent, len(execution_queue)))
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    ) as progress:
-        progress_task_id = progress.add_task(
-            f"Replaying ({total_task_executions} tasks, {total_progress} reqs)",
-            total=total_progress,
+    # Verbose mode: track per-recording state for live-updating display
+    recording_states: dict[int, _RecordingState] = {}
+
+    if verbose:
+        all_results = await _run_verbose(
+            con=con,
+            execution_queue=execution_queue,
+            j=j,
+            url=url,
+            config=config,
+            headers=headers,
+            model_context_length=model_context_length,
+            extra_body=extra_body,
+            recording_states=recording_states,
+            upstream_api=effective_api,
         )
-
-        async with contextlib.AsyncExitStack() as stack:
-            slot_clients: list[httpx.AsyncClient] = [
-                await stack.enter_async_context(httpx.AsyncClient())
-                for _ in range(j)
-            ]
-
-            async def _run_schedule_task(
-                sched_task: tuple[Task, int],
-                slot_id: int,
-            ) -> list[RequestMetrics]:
-                task, _exec_idx = sched_task
-                return await _replay_task_entries(
-                    client=slot_clients[slot_id],
-                    url=url,
-                    model_override=config.model,
-                    headers=headers,
-                    entries=task.entries,
-                    timeout=config.timeout,
-                    user_id=slot_id,
-                    on_complete=lambda: progress.advance(progress_task_id),
-                    model_context_length=model_context_length,
-                    extra_body=extra_body,
-                )
-
-            all_results = await run_work_queue(
-                execution_queue,
-                _run_schedule_task,
-                max_concurrent=j,
-            )
-
-        progress.remove_task(progress_task_id)
+    else:
+        all_results = await _run_progress_bar(
+            con=con,
+            execution_queue=execution_queue,
+            j=j,
+            url=url,
+            config=config,
+            headers=headers,
+            total_task_executions=total_task_executions,
+            total_progress=total_progress,
+            model_context_length=model_context_length,
+            extra_body=extra_body,
+            upstream_api=effective_api,
+        )
 
     flat_results: list[RequestMetrics] = []
     for task_results in all_results:
@@ -524,15 +750,229 @@ async def replay_scenario(
             bucket_label,
             stats,
             scenario=scenario_result,
+            con=con,
         )
 
-    console.rule()
-    _print_replay_summary(run, scenario)
+    con.rule()
+    _print_replay_summary(run, scenario, con=con)
 
     if config.output:
-        _save_replay_output(config, run)
+        _save_replay_output(config, run, con=con)
+
+    if json_stdout:
+        sys.stdout.write(json.dumps(run.to_dict(), indent=2))
+        sys.stdout.write("\n")
 
     return run
+
+
+# ---------------------------------------------------------------------------
+# Verbose mode: live-updating per-recording progress
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _RecordingState:
+    """Mutable state for one recording's live display line."""
+    name: str = ""
+    slot_id: int = 0
+    phase: str = "waiting"
+    current_req: int = 0
+    total_reqs: int = 0
+    decode_tps: float = 0.0
+    done: bool = False
+
+
+def _build_verbose_display(states: dict[int, _RecordingState]) -> Table:
+    """Build a Rich Table for live-updating verbose output."""
+    table = Table.grid(padding=(0, 1))
+    table.add_column("slot", style="dim", width=8)
+    table.add_column("name", width=30)
+    table.add_column("phase", width=12)
+    table.add_column("progress", width=14)
+    table.add_column("tps", width=20)
+
+    for _slot, st in sorted(states.items()):
+        if st.done:
+            phase_str = "[green]done[/green]"
+            tps_str = f"[dim]{st.decode_tps:.0f} tok/s[/dim]" if st.decode_tps > 0 else ""
+        elif st.phase == "prefill":
+            phase_str = "[yellow][prefill][/yellow]"
+            tps_str = ""
+        elif st.phase == "decode":
+            phase_str = "[cyan][decode][/cyan]"
+            tps_str = (
+                f"decode tps: [bold cyan]{st.decode_tps:.0f}[/bold cyan]"
+                if st.decode_tps > 0
+                else ""
+            )
+        else:
+            phase_str = "[dim]waiting[/dim]"
+            tps_str = ""
+
+        table.add_row(
+            f"slot {st.slot_id}:",
+            st.name,
+            phase_str,
+            f"req {st.current_req}/{st.total_reqs}",
+            tps_str,
+        )
+
+    return table
+
+
+async def _run_verbose(
+    *,
+    con: Console,
+    execution_queue: list,
+    j: int,
+    url: str,
+    config: BenchmarkConfig,
+    headers: dict,
+    model_context_length: int | None,
+    extra_body: dict | None,
+    recording_states: dict[int, _RecordingState],
+    upstream_api: str = "openai",
+) -> list:
+    """Run the replay with live-updating per-recording verbose display."""
+    live = Live(
+        _build_verbose_display(recording_states),
+        console=con,
+        refresh_per_second=4,
+        transient=True,
+    )
+
+    async with contextlib.AsyncExitStack() as stack:
+        slot_clients: list[httpx.AsyncClient] = [
+            await stack.enter_async_context(httpx.AsyncClient())
+            for _ in range(j)
+        ]
+
+        async def _run_schedule_task(
+            sched_task: tuple[Task, int],
+            slot_id: int,
+        ) -> list[RequestMetrics]:
+            task, _exec_idx = sched_task
+
+            state = _RecordingState(
+                name=task.name or task.id,
+                slot_id=slot_id,
+                phase="prefill",
+                current_req=0,
+                total_reqs=len(task.entries),
+            )
+            recording_states[slot_id] = state
+            live.update(_build_verbose_display(recording_states))
+
+            results: list[RequestMetrics] = []
+            for i, entry in enumerate(task.entries):
+                state.current_req = i + 1
+                state.phase = "prefill"
+                live.update(_build_verbose_display(recording_states))
+
+                tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+                if model_context_length is not None and tokens > model_context_length:
+                    continue
+
+                model = config.model or entry.model
+                m = await _replay_one_request(
+                    client=slot_clients[slot_id],
+                    url=url,
+                    model=model,
+                    headers=headers,
+                    messages=entry.messages,
+                    max_tokens=entry.max_tokens,
+                    seq=entry.seq,
+                    timeout=config.timeout,
+                    user_id=slot_id,
+                    extra_body=extra_body,
+                    upstream_api=upstream_api,
+                )
+                m.context_profile = _bucket_label(tokens)
+                m.context_tokens = tokens
+                results.append(m)
+
+                state.phase = "decode"
+                state.decode_tps = m.tok_per_sec or 0.0
+                live.update(_build_verbose_display(recording_states))
+
+            state.done = True
+            live.update(_build_verbose_display(recording_states))
+            return results
+
+        with live:
+            all_results = await run_work_queue(
+                execution_queue,
+                _run_schedule_task,
+                max_concurrent=j,
+            )
+
+    return all_results
+
+
+async def _run_progress_bar(
+    *,
+    con: Console,
+    execution_queue: list,
+    j: int,
+    url: str,
+    config: BenchmarkConfig,
+    headers: dict,
+    total_task_executions: int,
+    total_progress: int,
+    model_context_length: int | None,
+    extra_body: dict | None,
+    upstream_api: str = "openai",
+) -> list:
+    """Run the replay with a simple aggregate progress bar (non-verbose)."""
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=con,
+        transient=True,
+    ) as progress:
+        task_word = "tasks" if total_task_executions != 1 else "task"
+        progress_task_id = progress.add_task(
+            f"Replaying ({total_task_executions} {task_word}, {total_progress} reqs)",
+            total=total_progress,
+        )
+
+        async with contextlib.AsyncExitStack() as stack:
+            slot_clients: list[httpx.AsyncClient] = [
+                await stack.enter_async_context(httpx.AsyncClient())
+                for _ in range(j)
+            ]
+
+            async def _run_schedule_task(
+                sched_task: tuple[Task, int],
+                slot_id: int,
+            ) -> list[RequestMetrics]:
+                task, _exec_idx = sched_task
+                return await _replay_task_entries(
+                    client=slot_clients[slot_id],
+                    url=url,
+                    model_override=config.model,
+                    headers=headers,
+                    entries=task.entries,
+                    timeout=config.timeout,
+                    user_id=slot_id,
+                    on_complete=lambda: progress.advance(progress_task_id),
+                    model_context_length=model_context_length,
+                    extra_body=extra_body,
+                    upstream_api=upstream_api,
+                )
+
+            all_results = await run_work_queue(
+                execution_queue,
+                _run_schedule_task,
+                max_concurrent=j,
+            )
+
+        progress.remove_task(progress_task_id)
+
+    return all_results
 
 
 def _print_bucket_stats(
@@ -540,11 +980,13 @@ def _print_bucket_stats(
     stats,
     *,
     scenario: ScenarioResult | None = None,
+    con: Console | None = None,
 ) -> None:
+    c = con or console
     if stats.successful == 0:
-        console.print(f"\n  [red]{label}: all {stats.total_requests} requests failed[/red]")
+        c.print(f"\n  [red]{label}: all {stats.total_requests} requests failed[/red]")
         if scenario and any(is_context_length_error(r.error) for r in scenario.failures):
-            console.print("         [yellow]↳ prompt exceeded model's context window[/yellow]")
+            c.print("         [yellow]↳ prompt exceeded model's context window[/yellow]")
         return
 
     prefill_str = (
@@ -552,7 +994,7 @@ def _print_bucket_stats(
         if stats.prefill_tok_per_sec.count > 0
         else ""
     )
-    console.print(
+    c.print(
         f"\n  {label}: {stats.successful}/{stats.total_requests} ok | "
         f"decode: [bold cyan]{stats.tok_per_sec.median:.1f}[/bold cyan] tok/s | "
         f"{prefill_str}"
@@ -561,32 +1003,36 @@ def _print_bucket_stats(
     )
 
 
-def _print_replay_summary(run: BenchmarkRun, scenario: Scenario) -> None:
-    from rich.table import Table
+def _print_replay_summary(
+    run: BenchmarkRun,
+    scenario: Scenario,
+    con: Console | None = None,
+) -> None:
+    c = con or console
 
     if not run.scenarios:
-        console.print(
+        c.print(
             "\n  [yellow]No requests were sent - all were skipped or filtered out.[/yellow]"
         )
-        console.print(
+        c.print(
             "  [yellow]Try a larger --model-context-length or a different scenario.[/yellow]"
         )
         return
 
     title = f"Replay: {scenario.name} -> {run.model}"
 
-    table = Table(title=title)
-    table.add_column("Context", justify="right")
-    table.add_column("Requests", justify="right")
-    table.add_column("Decode tok/s", justify="right")
-    table.add_column("Prefill tok/s", justify="right")
-    table.add_column("TTFT p50", justify="right")
-    table.add_column("OK", justify="right")
+    tbl = Table(title=title)
+    tbl.add_column("Context", justify="right")
+    tbl.add_column("Requests", justify="right")
+    tbl.add_column("Decode tok/s", justify="right")
+    tbl.add_column("Prefill tok/s", justify="right")
+    tbl.add_column("TTFT p50", justify="right")
+    tbl.add_column("OK", justify="right")
 
     for s in run.scenarios:
         stats = analyze_scenario(s)
         if stats.successful == 0:
-            table.add_row(
+            tbl.add_row(
                 stats.context_profile,
                 str(stats.total_requests),
                 "[red]FAIL[/red]",
@@ -600,7 +1046,7 @@ def _print_replay_summary(run: BenchmarkRun, scenario: Scenario) -> None:
                 if stats.prefill_tok_per_sec.count > 0
                 else "-"
             )
-            table.add_row(
+            tbl.add_row(
                 stats.context_profile,
                 str(stats.total_requests),
                 f"{stats.tok_per_sec.median:.1f}",
@@ -609,17 +1055,17 @@ def _print_replay_summary(run: BenchmarkRun, scenario: Scenario) -> None:
                 f"{stats.successful}/{stats.total_requests}",
             )
 
-    console.print(table)
+    c.print(tbl)
 
     ctx_len_failures = sum(
         1 for s in run.scenarios for r in s.failures if is_context_length_error(r.error)
     )
     if ctx_len_failures:
-        console.print(
+        c.print(
             f"\n  [yellow]⚠  {ctx_len_failures} request(s) failed because the prompt"
             f" exceeded the model's context window.[/yellow]"
         )
-        console.print(
+        c.print(
             "  [yellow]   Use [bold]--model-context-length N[/bold] to skip"
             " requests that exceed N tokens, or [bold]--slice-tokens N[/bold]"
             " to cap cumulative prompt size.[/yellow]"
@@ -646,27 +1092,34 @@ def _print_replay_dry_run(
     scenario: Scenario,
     url: str,
     schedule: Schedule,
+    con: Console | None = None,
 ) -> None:
-    console.print("\n[bold yellow]DRY RUN -- no requests will be sent[/bold yellow]\n")
-    console.print(f"  Target URL: {url}")
-    console.print(f"  Scenario: {scenario.name}")
-    console.print(f"  Tasks: {len(scenario.tasks)}")
-    console.print(f"  Total requests: {scenario.total_requests}")
-    console.print(_schedule_line(schedule))
-    console.print(f"  Approx tokens: {scenario.total_tokens_approx:,}")
+    c = con or console
+    c.print("\n[bold yellow]DRY RUN -- no requests will be sent[/bold yellow]\n")
+    c.print(f"  Target URL: {url}")
+    c.print(f"  Scenario: {scenario.name}")
+    c.print(f"  Tasks: {len(scenario.tasks)}")
+    c.print(f"  Total requests: {scenario.total_requests}")
+    c.print(_schedule_line(schedule))
+    c.print(f"  Approx tokens: {scenario.total_tokens_approx:,}")
 
     for task in scenario.tasks[:5]:
-        console.print(f"\n  Task: {task.id} ({task.total_requests} requests)")
+        c.print(f"\n  Task: {task.id} ({task.total_requests} requests)")
         for entry in task.entries[:3]:
             tok = sum(len(m.get("content", "")) for m in entry.messages) // 4
-            console.print(f"    [{entry.seq}] ~{tok:,} tokens, max_out={entry.max_tokens}")
+            c.print(f"    [{entry.seq}] ~{tok:,} tokens, max_out={entry.max_tokens}")
         if task.total_requests > 3:
-            console.print(f"    ... and {task.total_requests - 3} more")
+            c.print(f"    ... and {task.total_requests - 3} more")
     if len(scenario.tasks) > 5:
-        console.print(f"\n  ... and {len(scenario.tasks) - 5} more tasks")
+        c.print(f"\n  ... and {len(scenario.tasks) - 5} more tasks")
 
 
-def _save_replay_output(config: BenchmarkConfig, run: BenchmarkRun) -> None:
+def _save_replay_output(
+    config: BenchmarkConfig,
+    run: BenchmarkRun,
+    con: Console | None = None,
+) -> None:
+    c = con or console
     output = config.output
     out_path = Path(output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -679,7 +1132,7 @@ def _save_replay_output(config: BenchmarkConfig, run: BenchmarkRun) -> None:
         json_path = output + ".json"
 
     run.save(json_path)
-    console.print(f"\n  Results saved to {json_path}")
+    c.print(f"\n  Results saved to {json_path}")
 
     if output.endswith(".md"):
         from agentic_swarm_bench.report.markdown import generate_report
@@ -687,4 +1140,4 @@ def _save_replay_output(config: BenchmarkConfig, run: BenchmarkRun) -> None:
         report = generate_report(run, json_path=json_path)
         with open(output, "w") as f:
             f.write(report)
-        console.print(f"  Report saved to {output}")
+        c.print(f"  Report saved to {output}")

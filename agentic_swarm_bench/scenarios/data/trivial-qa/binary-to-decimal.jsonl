@@ -1,0 +1,1 @@
+{"seq": 1, "experiment_id": "trivial_binary-t", "timestamp": "2026-04-18T00:00:00+00:00", "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "Convert the binary number 10110 to decimal."}], "model": "claude-opus-4-6", "max_tokens": 256, "temperature": 1.0, "stream": true, "prompt_tokens": 20}

@@ -17,6 +17,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#why-agentic-swarm">Why Agentic Swarm</a> &bull;
+  <a href="#built-in-scenarios">Built-in Scenarios</a> &bull;
   <a href="#scenario-recording--replay"><strong>Record & Replay</strong></a> &bull;
   <a href="#benchmark-modes">Modes</a> &bull;
   <a href="#the-110-tasks">Tasks</a> &bull;
@@ -69,6 +70,22 @@ pip install agentic-swarm-bench                # or with pip
 uv pip install "agentic-swarm-bench[proxy]"    # add proxy support (for agent / record modes)
 ```
 
+### Quick smoke test (30 seconds)
+
+Verify your endpoint works before doing anything else - replay the built-in `trivial-qa` scenario:
+
+```bash
+asb replay -e http://your-server:8000 -m your-model --scenario trivial-qa
+```
+
+This fires 5 trivial single-turn requests (~20 tokens each) and reports TTFT and tok/s. If numbers come back, your setup works. Then try the real thing:
+
+```bash
+asb replay -e http://your-server:8000 -m your-model --scenario js-coding-opus
+```
+
+This replays 5 multi-turn agentic coding sessions (REST API, CLI tool, WebSocket chat, audit trail, search/batch) recorded with Claude Opus 4.6 - growing context from ~1K to ~40K chars across 4 turns each.
+
 ### Record a real session, then replay it anywhere
 
 The fastest way to get meaningful numbers: record what you actually do, then replay it.
@@ -83,7 +100,7 @@ ANTHROPIC_BASE_URL=http://localhost:19000 claude
 # 3. Do your normal work. Ctrl+C when done. You now have a .jsonl recording.
 
 # 4. Replay that session against any endpoint
-asb replay -e http://new-server:8000 -m my-model -w my-session.jsonl
+asb replay -e http://new-server:8000 -m my-model --scenario my-session.jsonl
 ```
 
 This captures your real context patterns, real token counts, and real multi-turn behavior - then lets you A/B test endpoints with your actual workload.
@@ -140,6 +157,38 @@ docker run --rm -v $(pwd)/results:/results \
   --suite quick \
   --output /results/report.md
 ```
+
+---
+
+## Built-in Scenarios
+
+Two ready-made scenarios ship with the package so you can benchmark immediately - no recording needed:
+
+| Scenario             | Type                  | Tasks | Turns/task | Context          | What it measures                                    |
+| -------------------- | --------------------- | ----: | ---------: | ---------------- | --------------------------------------------------- |
+| **`trivial-qa`**     | Non-agentic baseline  |     5 |          1 | ~20 tokens each  | Raw single-turn speed (TTFT, tok/s)                 |
+| **`js-coding-opus`** | Real agentic sessions |     5 |          4 | ~1K → ~40K chars | Multi-turn agentic performance with growing context |
+
+```bash
+# List all built-in scenarios
+asb list-scenarios
+
+# Quick smoke test - 5 trivial questions, ~20 tokens each
+asb replay -e http://your-server:8000 -m your-model --scenario trivial-qa
+
+# Real agentic workload - 5 JS coding sessions recorded with Claude Opus 4.6
+asb replay -e http://your-server:8000 -m your-model --scenario js-coding-opus
+
+# Replay a single task from a scenario
+asb replay -e http://your-server:8000 -m your-model --scenario js-coding-opus --task build-rest-api
+
+# Run multiple repetitions for stable numbers
+asb replay -e http://your-server:8000 -m your-model --scenario js-coding-opus --repetitions 3
+```
+
+**`trivial-qa`** - Five trivial single-turn questions (capital of France, largest planet, boiling point of water, speed of light, binary conversion). Non-agentic baseline with minimal context. Useful as a quick smoke test and for comparing agentic vs non-agentic performance on the same endpoint.
+
+**`js-coding-opus`** - Five independent JavaScript coding sessions (rate limiting middleware, CLI admin tool, WebSocket real-time updates, activity log/audit trail, search & batch operations). Each task has 4 turns of real multi-turn conversation with growing context. Recorded with Claude Opus 4.6 against a TaskFlow API project.
 
 ---
 
@@ -221,23 +270,23 @@ Take a recorded scenario and replay it against a different endpoint, hardware, o
 asb replay \
   -e http://new-server:8000 \
   -m my-model \
-  -w my-session.jsonl
+  --scenario my-session.jsonl
 
 # Replay a scenario directory with schedule
 asb replay \
   -e http://new-server:8000 \
   -m my-model \
-  -w ./scenarios/my-scenario/ \
+  --scenario ./scenarios/my-scenario/ \
   --repetitions 3 --max-concurrent 5 --policy sequential
 
 # Default: realistic cache mode (shared prefix preserved, user context poisoned)
-asb replay -e URL -m MODEL -w scenario
+asb replay -e URL -m MODEL --scenario scenario
 
 # Preview without sending requests
-asb replay -e URL -m MODEL -w session.jsonl --dry-run
+asb replay -e URL -m MODEL --scenario session.jsonl --dry-run
 
 # Replay just the beginning of a session (up to 1M cumulative prompt tokens)
-asb replay -e URL -m MODEL -w session.jsonl --slice-tokens 1000000
+asb replay -e URL -m MODEL --scenario session.jsonl --slice-tokens 1000000
 ```
 
 **Scheduling:** Control how tasks execute with `--repetitions`, `--max-concurrent`, and `--policy` (round_robin, sequential, random).
@@ -477,10 +526,10 @@ asb speed -e URL -m MODEL --cache-mode realistic
 asb speed -e URL -m MODEL --cache-mode allwarm
 
 # replay: default is realistic (production-accurate)
-asb replay -e URL -m MODEL -w scenario
+asb replay -e URL -m MODEL --scenario scenario
 
 # replay: all-cached (optimistic upper bound)
-asb replay -e URL -m MODEL -w scenario --cache-mode allwarm
+asb replay -e URL -m MODEL --scenario scenario --cache-mode allwarm
 ```
 
 `--cache-mode realistic` on `asb speed` runs each scenario twice (allcold then allwarm) and reports both. Anthropic charges 10x less for cached tokens ($0.30 vs $3.00/M), so knowing your cache hit rate matters.
@@ -632,7 +681,9 @@ agentic-swarm-bench/
       registry.py       ← Load/list/resolve scenarios (file path or built-in name)
       schedule.py       ← Execution schedule: repetitions, concurrency, ordering policy
       poison.py         ← Prefix-cache poisoning: breaks KV cache between repetitions
-      data/             ← Built-in scenario directories
+      data/
+        trivial-qa/     ← Non-agentic baseline (5 single-turn Q&A tasks)
+        js-coding-opus/ ← Agentic JS coding sessions (5 multi-turn tasks)
 
     tasks/
       tasks.json        ← 110 agentic swarm tasks, P1-P110

@@ -1,15 +1,18 @@
 """Load, list, and filter recorded scenarios.
 
-A scenario is a benchmark unit containing one or more tasks.
-Each task has a recording -- a JSONL file where each line is a recorded
-request from a real agentic coding session. Scenarios can be:
-  - Built-in (shipped with the package in scenarios/data/)
-  - User-recorded (via `asb record`)
-  - Downloaded from the community
+Terminology:
+  Scenario    A JSON manifest (``scenario.json``) that defines one or more
+              tasks with metadata.  This is the top-level unit passed to
+              ``asb replay --scenario``.
+  Task        One logical unit of work inside a scenario.  Each task has
+              a *recording* - a JSONL file of captured HTTP round-trips
+              from a real agentic coding session.
+  Recording   The JSONL file backing a task, produced by ``asb record``.
 
-A scenario can be stored as:
-  - A directory with a scenario.json manifest + per-task JSONL files
-  - A single JSONL file (treated as a one-task scenario for backward compat)
+Storage on disk:
+  - A directory with ``scenario.json`` manifest + per-task ``.jsonl`` files.
+  - A standalone ``.json`` scenario file referencing recordings by path.
+  - A single ``.jsonl`` file → one-task scenario (backward compat).
 """
 
 from __future__ import annotations
@@ -71,13 +74,17 @@ class Scenario:
     """A benchmark scenario containing one or more tasks.
 
     This is the top-level data structure for replay. A scenario like
-    "markdown-note-app" or "cpp-coding-glm5" bundles multiple tasks,
+    "js-coding-opus" or "trivial-qa" bundles multiple tasks,
     each with its own recording.
+
+    Optional metadata fields come from the scenario.json manifest:
+      model          The model used when the recordings were captured.
     """
 
     name: str = ""
     description: str = ""
     path: str = ""
+    model: str = ""
     tasks: list[Task] = field(default_factory=list)
 
     @property
@@ -98,7 +105,7 @@ class Scenario:
         return sum(t.total_tokens_approx for t in self.tasks)
 
     def summary(self) -> dict:
-        return {
+        out = {
             "name": self.name,
             "description": self.description,
             "path": self.path,
@@ -107,6 +114,9 @@ class Scenario:
             "requests": self.total_requests,
             "approx_tokens": self.total_tokens_approx,
         }
+        if self.model:
+            out["model"] = self.model
+        return out
 
 
 def _parse_entry(data: dict) -> RecordingEntry:
@@ -139,13 +149,16 @@ def _load_jsonl(path: Path) -> list[RecordingEntry]:
 
 
 def load_scenario(path: str | Path) -> Scenario:
-    """Load a scenario from a directory (with manifest) or a single JSONL file."""
+    """Load a scenario from a directory, standalone JSON, or single JSONL recording."""
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Scenario not found: {p}")
 
     if p.is_dir():
         return _load_scenario_dir(p)
+
+    if p.suffix == ".json":
+        return _load_scenario_json_file(p)
 
     return _load_scenario_jsonl(p)
 
@@ -160,7 +173,11 @@ def _load_scenario_dir(directory: Path) -> Scenario:
         manifest = json.load(f)
 
     tasks: list[Task] = []
-    for task_def in manifest.get("tasks", []):
+    for i, task_def in enumerate(manifest.get("tasks", [])):
+        if "recording" not in task_def:
+            raise ValueError(
+                f"Task at index {i} in {manifest_path} is missing required 'recording' field"
+            )
         recording_path = directory / task_def["recording"]
         if not recording_path.exists():
             raise FileNotFoundError(f"Task recording not found: {recording_path}")
@@ -177,6 +194,7 @@ def _load_scenario_dir(directory: Path) -> Scenario:
         name=manifest.get("name", directory.name),
         description=manifest.get("description", ""),
         path=str(directory),
+        model=manifest.get("model", ""),
         tasks=tasks,
     )
 
@@ -232,22 +250,95 @@ def list_builtin_scenarios() -> list[dict]:
     return scenarios
 
 
-def get_scenario(name_or_path: str) -> Scenario:
-    """Load a scenario by name (built-in) or file/directory path."""
+def get_scenario(name_or_path: str, *, task_filter: str | None = None) -> Scenario:
+    """Load a scenario by name (built-in) or file/directory path.
+
+    When *task_filter* is set, only the task whose ``id`` matches is kept.
+    This lets ``asb replay --scenario X --task build-app`` replay a single
+    task out of a multi-task scenario.
+    """
     p = Path(name_or_path)
     if p.exists():
-        return load_scenario(p)
+        scenario = load_scenario(p)
+    else:
+        builtin_dir = BUILTIN_DIR / name_or_path
+        if builtin_dir.is_dir() and (builtin_dir / "scenario.json").exists():
+            scenario = load_scenario(builtin_dir)
+        elif (BUILTIN_DIR / f"{name_or_path}.jsonl").exists():
+            scenario = load_scenario(BUILTIN_DIR / f"{name_or_path}.jsonl")
+        else:
+            raise FileNotFoundError(
+                f"Scenario '{name_or_path}' not found. "
+                f"Provide a path to a scenario JSON, a .jsonl recording, "
+                f"a scenario directory, or a built-in scenario name."
+            )
 
-    builtin_dir = BUILTIN_DIR / name_or_path
-    if builtin_dir.is_dir() and (builtin_dir / "scenario.json").exists():
-        return load_scenario(builtin_dir)
+    if task_filter is not None:
+        matched = [t for t in scenario.tasks if t.id == task_filter]
+        if not matched:
+            available = ", ".join(t.id for t in scenario.tasks) or "(none)"
+            raise FileNotFoundError(
+                f"Task '{task_filter}' not found in scenario '{scenario.name}'. "
+                f"Available tasks: {available}"
+            )
+        scenario = Scenario(
+            name=scenario.name,
+            description=scenario.description,
+            path=scenario.path,
+            model=scenario.model,
+            tasks=matched,
+        )
 
-    builtin_jsonl = BUILTIN_DIR / f"{name_or_path}.jsonl"
-    if builtin_jsonl.exists():
-        return load_scenario(builtin_jsonl)
+    return scenario
 
-    raise FileNotFoundError(
-        f"Scenario '{name_or_path}' not found. "
-        f"Provide a path to a .jsonl file, a scenario directory, "
-        f"or a built-in scenario name."
+
+def _load_scenario_json_file(path: Path) -> Scenario:
+    """Load a standalone scenario JSON file (not inside a directory).
+
+    The scenario JSON format::
+
+        {
+          "name": "glm5_cpp_simple",
+          "description": "GLM-5 C++ coding with Claude",
+          "model": "claude-sonnet-4-20250514",
+          "tasks": [
+            {"id": "build-app", "name": "Build the app", "recording": "build-app.jsonl"},
+            {"id": "fix-build", "name": "Fix build errors", "recording": "fix-build.jsonl"}
+          ]
+        }
+
+    Recording paths are resolved relative to the JSON file's directory.
+    """
+    with open(path) as f:
+        manifest = json.load(f)
+
+    base_dir = path.parent
+
+    tasks: list[Task] = []
+    for i, task_def in enumerate(manifest.get("tasks", [])):
+        if "recording" not in task_def:
+            raise ValueError(
+                f"Task at index {i} in {path} is missing required 'recording' field"
+            )
+        rec_path = base_dir / task_def["recording"]
+        if not rec_path.exists():
+            raise FileNotFoundError(
+                f"Recording not found: {rec_path} "
+                f"(referenced in scenario {path})"
+            )
+        entries = _load_jsonl(rec_path)
+        tasks.append(
+            Task(
+                id=task_def.get("id", rec_path.stem),
+                name=task_def.get("name", rec_path.stem),
+                entries=entries,
+            )
+        )
+
+    return Scenario(
+        name=manifest.get("name", path.stem),
+        description=manifest.get("description", ""),
+        path=str(path),
+        model=manifest.get("model", ""),
+        tasks=tasks,
     )

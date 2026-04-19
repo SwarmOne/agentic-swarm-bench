@@ -68,9 +68,10 @@ def test_list_scenarios_json_is_valid():
     assert result.exit_code == 0, result.output
     scenarios = json.loads(result.output)
     assert isinstance(scenarios, list)
-    assert len(scenarios) >= 1
+    assert len(scenarios) >= 2
     names = [s["name"] for s in scenarios]
-    assert "markdown-note-app" in names
+    assert "js-coding-opus" in names
+    assert "trivial-qa" in names
 
 
 def test_list_tasks_json_no_embedded_newlines():
@@ -675,7 +676,7 @@ async def test_speed_keyboard_interrupt_saves_partial_and_exits_130(monkeypatch,
 @pytest.mark.asyncio
 async def test_run_scenario_cancel_midflight_preserves_completed_requests():
     # A single user finishing while peers are still streaming must survive the
-    # cancel — the partial ScenarioResult is carried out on _ScenarioCancelled.
+    # cancel - the partial ScenarioResult is carried out on _ScenarioCancelled.
     from agentic_swarm_bench.runner import direct as runner_module
 
     async def mixed_send(**kw):
@@ -936,7 +937,7 @@ def test_compare_no_overlap_says_so_explicitly():
     b = _single_scenario_run("b", "short")
     report = generate_comparison(a, b)
     assert "No shared" in report
-    # And must not falsely blame failures — the sides both succeeded.
+    # And must not falsely blame failures - the sides both succeeded.
     assert "all requests failed" not in report
     assert "all overlapping scenarios had zero completions" not in report
 
