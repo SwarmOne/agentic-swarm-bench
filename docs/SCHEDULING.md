@@ -57,7 +57,7 @@ L = shuffle([ (t1,0), …, (tT,R-1) ])
 ```
 
 Closest to "N independent users working on unrelated things at the same
-time" — the hardest cache-sharing pattern for the server. Pass `--seed N`
+time" - the hardest cache-sharing pattern for the server. Pass `--seed N`
 to reproduce a specific shuffle across runs; omit it for fresh entropy.
 
 **Agent mode defaults to `random`** because anything else lets the
@@ -118,12 +118,12 @@ The run ends when `pending` is empty and all workers have returned.
 
 ## CLI flags
 
-| Flag                 | Symbol | Applies to        | Default |
-| -------------------- | ------ | ----------------- | ------- |
-| `--repetitions, -r`  | R      | replay, agent     | 1       |
-| `--max-concurrent`   | J      | replay, agent     | 10 / 1  |
-| `--policy`           |        | replay, agent     | round_robin / random |
-| `--seed`             |        | replay, agent     | None (system entropy) |
+| Flag                | Symbol | Applies to    | Default               |
+| ------------------- | ------ | ------------- | --------------------- |
+| `--repetitions, -r` | R      | replay, agent | 1                     |
+| `--max-concurrent`  | J      | replay, agent | 10 / 1                |
+| `--policy`          |        | replay, agent | round_robin / random  |
+| `--seed`            |        | replay, agent | None (system entropy) |
 
 Replay defaults to `round_robin` and `J=10` because replays tend to be
 bulk throughput sweeps. Agent defaults to `random` and `J=1` because a
