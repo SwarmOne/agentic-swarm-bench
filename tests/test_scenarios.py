@@ -173,7 +173,10 @@ def test_builtin_js_coding_opus():
     assert s.model == "claude-opus-4-6"
     assert len(s.tasks) == 5
     task_ids = {t.id for t in s.tasks}
-    assert task_ids == {"build-rest-api", "csv-parser-cli", "websocket-chat", "markdown-renderer", "state-machine"}
+    assert task_ids == {
+        "build-rest-api", "csv-parser-cli", "websocket-chat",
+        "markdown-renderer", "state-machine",
+    }
     for task in s.tasks:
         assert task.total_requests >= 2
         assert len(task.entries[0].messages) >= 2
