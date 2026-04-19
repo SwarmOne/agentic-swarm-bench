@@ -1137,3 +1137,152 @@ def test_get_scenario_no_filter_returns_all(tmp_path):
     path = _make_scenario_json(tmp_path)
     scenario = get_scenario(str(path))
     assert len(scenario.tasks) == 2
+
+
+# ---------------------------------------------------------------------------
+# min_lcp_length
+# ---------------------------------------------------------------------------
+
+
+def test_min_lcp_length_parsed_from_manifest(tmp_path):
+    scenario_dir = tmp_path / "lcp-test"
+    scenario_dir.mkdir()
+
+    rec = scenario_dir / "task.jsonl"
+    rec.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+    manifest = {
+        "name": "lcp-test",
+        "min_lcp_length": 5000,
+        "tasks": [{"id": "t", "recording": "task.jsonl"}],
+    }
+    (scenario_dir / "scenario.json").write_text(json.dumps(manifest))
+
+    scenario = load_scenario(scenario_dir)
+    assert scenario.min_lcp_length == 5000
+
+
+def test_min_lcp_length_none_when_absent(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    scenario = load_scenario(path)
+    assert scenario.min_lcp_length is None
+
+
+def test_min_lcp_length_parsed_from_standalone_json(tmp_path):
+    rec = tmp_path / "t.jsonl"
+    rec.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+    manifest = {
+        "name": "standalone-lcp",
+        "min_lcp_length": 1234,
+        "tasks": [{"id": "t", "recording": "t.jsonl"}],
+    }
+    path = tmp_path / "standalone.json"
+    path.write_text(json.dumps(manifest))
+
+    scenario = load_scenario(path)
+    assert scenario.min_lcp_length == 1234
+
+
+def test_min_lcp_length_preserved_through_task_filter(tmp_path):
+    path = _make_scenario_json(tmp_path)
+    with open(path) as f:
+        manifest = json.load(f)
+    manifest["min_lcp_length"] = 9999
+    with open(path, "w") as f:
+        json.dump(manifest, f)
+
+    scenario = get_scenario(str(path), task_filter="session-a")
+    assert scenario.min_lcp_length == 9999
+    assert len(scenario.tasks) == 1
+
+
+# ---------------------------------------------------------------------------
+# Built-in filename resolution (-s name/manifest)
+# ---------------------------------------------------------------------------
+
+
+def test_builtin_json_file_resolution(tmp_path, monkeypatch):
+    """Resolving 'mydir/small' finds data/mydir/small.json."""
+    import agentic_swarm_bench.scenarios.registry as reg
+
+    data_dir = tmp_path / "data"
+    scenario_dir = data_dir / "mydir"
+    scenario_dir.mkdir(parents=True)
+
+    rec = scenario_dir / "t.jsonl"
+    rec.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+    manifest = {"name": "small-test", "tasks": [{"id": "t", "recording": "t.jsonl"}]}
+    (scenario_dir / "small.json").write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(reg, "BUILTIN_DIR", data_dir)
+    scenario = get_scenario("mydir/small")
+    assert scenario.name == "small-test"
+
+
+def test_builtin_json_file_explicit_extension(tmp_path, monkeypatch):
+    """Resolving 'mydir/small.json' also works (literal file fallback)."""
+    import agentic_swarm_bench.scenarios.registry as reg
+
+    data_dir = tmp_path / "data"
+    scenario_dir = data_dir / "mydir"
+    scenario_dir.mkdir(parents=True)
+
+    rec = scenario_dir / "t.jsonl"
+    rec.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+    manifest = {"name": "small-explicit", "tasks": [{"id": "t", "recording": "t.jsonl"}]}
+    (scenario_dir / "small.json").write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(reg, "BUILTIN_DIR", data_dir)
+    scenario = get_scenario("mydir/small.json")
+    assert scenario.name == "small-explicit"
+
+
+def test_builtin_dir_still_takes_priority(tmp_path, monkeypatch):
+    """A directory with scenario.json still wins over name.json resolution."""
+    import agentic_swarm_bench.scenarios.registry as reg
+
+    data_dir = tmp_path / "data"
+    scenario_dir = data_dir / "mydir"
+    scenario_dir.mkdir(parents=True)
+
+    rec = scenario_dir / "t.jsonl"
+    rec.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+    manifest = {"name": "from-dir", "tasks": [{"id": "t", "recording": "t.jsonl"}]}
+    (scenario_dir / "scenario.json").write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(reg, "BUILTIN_DIR", data_dir)
+    scenario = get_scenario("mydir")
+    assert scenario.name == "from-dir"
+
+
+def test_list_builtin_discovers_extra_json_files(tmp_path, monkeypatch):
+    """list_builtin_scenarios finds both scenario.json and sibling .json manifests."""
+    import agentic_swarm_bench.scenarios.registry as reg
+
+    data_dir = tmp_path / "data"
+    scenario_dir = data_dir / "mydir"
+    scenario_dir.mkdir(parents=True)
+
+    rec = scenario_dir / "t.jsonl"
+    rec.write_text(
+        json.dumps({"seq": 1, "messages": [{"role": "user", "content": "hi"}]}) + "\n"
+    )
+
+    for fname, sname in [("scenario.json", "full"), ("small.json", "small")]:
+        manifest = {"name": sname, "tasks": [{"id": "t", "recording": "t.jsonl"}]}
+        (scenario_dir / fname).write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(reg, "BUILTIN_DIR", data_dir)
+    scenarios = list_builtin_scenarios()
+    names = {s["name"] for s in scenarios}
+    assert "full" in names
+    assert "small" in names
