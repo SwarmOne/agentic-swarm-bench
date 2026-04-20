@@ -784,6 +784,25 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     "--verbose", "-V", is_flag=True,
     help="Show live per-task progress with phase, request count, and decode tok/s",
 )
+@click.option(
+    "--verbose-text", "--VV", is_flag=True,
+    help="Line-by-line text output (no ANSI cursor movement). "
+    "Designed for AI agents reading terminal output.",
+)
+@click.option(
+    "--max-consecutive-failures",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Abort the run if any slot hits this many consecutive failures "
+    "(HTTP errors, timeouts, or evaluation failures). Default: no limit.",
+)
+@click.option(
+    "--evaluate-llm",
+    is_flag=True,
+    default=False,
+    help="Run LLM-type evaluation directives (sends extra requests to the endpoint). "
+    "Without this flag, only contains/regex evaluations run.",
+)
 @click.pass_context
 def replay(
     ctx,
@@ -810,6 +829,9 @@ def replay(
     cache_mode,
     history_mode,
     verbose,
+    verbose_text,
+    max_consecutive_failures,
+    evaluate_llm,
 ):
     """Replay a recorded scenario against any endpoint.
 
@@ -867,6 +889,9 @@ def replay(
         -w scenario.json --upstream-api anthropic -k $ANTHROPIC_API_KEY \\
         --api-key-header x-api-key
     """
+    if verbose and verbose_text:
+        raise click.UsageError("--verbose and --verbose-text are mutually exclusive")
+
     from agentic_swarm_bench.scenarios.player import replay_scenario as _replay_scenario
     from agentic_swarm_bench.scenarios.schedule import Schedule
 
@@ -907,6 +932,9 @@ def replay(
             extra_body=merged_extra,
             json_stdout=json_stdout,
             verbose=verbose,
+            verbose_text=verbose_text,
+            max_consecutive_failures=max_consecutive_failures,
+            evaluate_llm=evaluate_llm,
             upstream_api=upstream_api,
         )
     )

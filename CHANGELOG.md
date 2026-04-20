@@ -2,6 +2,27 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [3.4.3] - 2026-04-20
+
+### Added
+
+- **Answer evaluation directives (`evaluate` field in scenario.json).** Tasks can now declare correctness checks — `contains` (substring match, case-sensitive by default), `regex` (Python `re.search`), and `llm` (sends a judge prompt to the endpoint and parses YES/NO). Directives live in the scenario manifest, not in the JSONL recording, so they're easy to author. Without a `"seq"` field the directive is checked against every turn's response and passes if any turn matches. The built-in `trivial-qa` scenario now ships with evaluate directives.
+- **`--evaluate-llm` flag on `asb replay`.** LLM-type evaluation directives are skipped by default (they cost extra requests). Pass `--evaluate-llm` to enable them. Contains/regex evaluations always run when directives are present.
+- **`--verbose-text` / `--VV` flag on `asb replay`.** Prints one plain-text line per event — no Rich Live display, no ANSI cursor movement. Designed for AI agents and CI pipelines that read terminal output line by line.
+- **`--max-consecutive-failures N` on `asb replay`.** Aborts the entire run if any worker slot hits N consecutive failures (HTTP errors, timeouts, or evaluation failures). Per-slot counters: each slot tracks independently, abort is triggered if ANY slot exceeds the threshold.
+- **`FailureTracker` class in player.py.** Encapsulates per-slot consecutive failure counting with `asyncio.Event` abort signaling across all workers.
+- **`Scenario.has_evaluations` property.** Returns True if any task in the scenario has evaluate directives.
+- **Evaluation summary in replay output.** After the benchmark summary, a per-task PASS/FAIL breakdown is printed with per-directive detail lines.
+- **`evaluator.py` module.** New `agentic_swarm_bench.scenarios.evaluator` with `EvalResult`, `evaluate_response`, `evaluate_response_llm`, and `aggregate_task_evals`.
+- **52 new tests** covering the evaluator (contains, regex, LLM mock, aggregation, seq targeting), `FailureTracker` (threshold, per-slot independence, reset), evaluate field parsing (directory/standalone JSON, has_evaluations, task filter preservation), and trivial-qa integration.
+
+### Changed
+
+- **History mode auto-upgrade.** When evaluate directives are present, `--history-mode recorded` is silently upgraded to `live` — evaluation requires the actual server response, not the recorded one.
+- **Response capture in `_replay_task_entries_live`.** New `response_collector` parameter lets callers collect per-entry response texts without changing the return type.
+
+---
+
 ## [3.4.2] - 2026-04-20
 
 ### Added

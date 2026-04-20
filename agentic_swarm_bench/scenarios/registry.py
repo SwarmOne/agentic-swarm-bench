@@ -50,11 +50,23 @@ class Task:
 
     A task groups a sequence of recorded LLM requests that form one
     coherent agentic operation (e.g. "analyze deps", "fix build").
+
+    Optional ``evaluate`` directives (from scenario.json) define
+    correctness checks on the model's response text::
+
+        "evaluate": [
+            {"type": "contains", "value": "Paris"},
+            {"type": "regex", "pattern": "def\\\\s+fib"},
+            {"type": "llm", "prompt": "Does this answer the question?"}
+        ]
+
+    Each directive can optionally target a specific request via ``"seq": N``.
     """
 
     id: str = ""
     name: str = ""
     entries: list[RecordingEntry] = field(default_factory=list)
+    evaluate: list[dict] | None = None
 
     @property
     def total_requests(self) -> int:
@@ -104,6 +116,11 @@ class Scenario:
     @property
     def total_tokens_approx(self) -> int:
         return sum(t.total_tokens_approx for t in self.tasks)
+
+    @property
+    def has_evaluations(self) -> bool:
+        """True if any task in this scenario has evaluate directives."""
+        return any(t.evaluate for t in self.tasks)
 
     def summary(self) -> dict:
         out = {
@@ -188,6 +205,7 @@ def _load_scenario_dir(directory: Path) -> Scenario:
                 id=task_def.get("id", recording_path.stem),
                 name=task_def.get("name", recording_path.stem),
                 entries=entries,
+                evaluate=task_def.get("evaluate"),
             )
         )
 
@@ -354,6 +372,7 @@ def _load_scenario_json_file(path: Path) -> Scenario:
                 id=task_def.get("id", rec_path.stem),
                 name=task_def.get("name", rec_path.stem),
                 entries=entries,
+                evaluate=task_def.get("evaluate"),
             )
         )
 

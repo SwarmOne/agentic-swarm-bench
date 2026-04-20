@@ -68,6 +68,49 @@ from agentic_swarm_bench.scenarios.schedule import (
 )
 
 console = Console()
+_plain_console = Console(highlight=False, markup=False)
+
+
+class FailureTracker:
+    """Per-slot consecutive failure counter with abort signaling.
+
+    Each slot independently tracks consecutive failures (HTTP errors,
+    timeouts, or evaluation failures). When ANY slot hits the threshold,
+    the shared ``abort_event`` is set and all workers should stop.
+    """
+
+    def __init__(self, threshold: int | None = None):
+        self.threshold = threshold
+        self.abort_event = asyncio.Event()
+        self._counts: dict[int, int] = {}
+        self._last_error: str = ""
+
+    @property
+    def aborted(self) -> bool:
+        return self.abort_event.is_set()
+
+    def record_success(self, slot_id: int) -> None:
+        self._counts[slot_id] = 0
+
+    def record_failure(self, slot_id: int, error: str) -> bool:
+        """Record a failure. Returns True if abort threshold was hit."""
+        if self.threshold is None:
+            return False
+        self._counts[slot_id] = self._counts.get(slot_id, 0) + 1
+        self._last_error = error
+        if self._counts[slot_id] >= self.threshold:
+            self.abort_event.set()
+            return True
+        return False
+
+    def abort_message(self) -> str:
+        for slot_id, count in self._counts.items():
+            if self.threshold and count >= self.threshold:
+                return (
+                    f"ABORT: slot {slot_id} hit {self.threshold} consecutive failures. "
+                    f"Last error: {self._last_error}"
+                )
+        return "ABORT: consecutive failure threshold exceeded"
 
 
 def _build_headers(config: BenchmarkConfig, upstream_api: str = "openai") -> dict:
@@ -664,6 +707,7 @@ async def _replay_task_entries_live(
     model_context_length: int | None = None,
     extra_body: dict | None = None,
     upstream_api: str = "openai",
+    response_collector: list[str] | None = None,
 ) -> list[RequestMetrics]:
     """Replay entries with live history: actual server responses feed the next turn.
 
@@ -672,6 +716,10 @@ async def _replay_task_entries_live(
     matches between turns.  Recordings define the *user* side (system prompt,
     user messages, tool results); the *assistant* side comes from whatever
     the server actually generates.
+
+    When *response_collector* is provided, the response text for each entry
+    is appended to it (in entry order).  Used by evaluation to check
+    model responses against directives.
     """
     actual_history: list[dict] = []
     results: list[RequestMetrics] = []
@@ -684,6 +732,8 @@ async def _replay_task_entries_live(
         tokens = sum(len(m.get("content", "")) for m in actual_history) // 4
 
         if model_context_length is not None and tokens > model_context_length:
+            if response_collector is not None:
+                response_collector.append("")
             if on_complete:
                 on_complete()
             continue
@@ -707,6 +757,9 @@ async def _replay_task_entries_live(
         )
 
         response_text = "".join(response_chunks)
+        if response_collector is not None:
+            response_collector.append(response_text)
+
         if response_text:
             actual_history.append({"role": "assistant", "content": response_text})
         else:
@@ -734,6 +787,9 @@ async def replay_scenario(
     extra_body: dict | None = None,
     json_stdout: bool = False,
     verbose: bool = False,
+    verbose_text: bool = False,
+    max_consecutive_failures: int | None = None,
+    evaluate_llm: bool = False,
     upstream_api: str | None = None,
 ) -> BenchmarkRun:
     """Replay a recorded scenario against the configured endpoint.
@@ -754,6 +810,18 @@ async def replay_scenario(
       When True, show live-updating per-task progress lines with
       phase (prefill/decode), request counts, and decode tok/s.
 
+    verbose_text:
+      When True, print one line per event to stdout (no Rich Live, no ANSI
+      cursor movement). Designed for AI agents consuming terminal output.
+
+    max_consecutive_failures:
+      When set, abort the run if any slot hits this many consecutive
+      failures (HTTP errors, timeouts, or evaluation failures).
+
+    evaluate_llm:
+      When True, run LLM-type evaluation directives (sends extra requests
+      to the configured endpoint).
+
     cache_mode:
       realistic  Preserve shared LCP, poison divergent per-user portion (default).
       allcold    Poison everything (lcp_len=0), every request defeats the cache.
@@ -771,8 +839,14 @@ async def replay_scenario(
 
     scenario = get_scenario(scenario_path, task_filter=task_filter)
 
+    if scenario.has_evaluations and history_mode == "recorded":
+        history_mode = "live"
+        con.print("  [dim]Using live history mode (required for evaluation)[/dim]")
+
     if schedule is None:
         schedule = Schedule()
+
+    tracker = FailureTracker(threshold=max_consecutive_failures)
 
     if effective_api == "anthropic":
         url = config.endpoint.rstrip("/")
@@ -863,38 +937,44 @@ async def replay_scenario(
     # which matters for prefix-cache measurements.
     j = max(1, min(schedule.max_concurrent, len(execution_queue)))
 
-    # Verbose mode: track per-recording state for live-updating display
+    from agentic_swarm_bench.scenarios.evaluator import EvalResult
+
+    all_eval_results: list[tuple[str, list[EvalResult]]] = []
+
     recording_states: dict[int, _RecordingState] = {}
 
-    if verbose:
+    run_kwargs = dict(
+        con=con,
+        execution_queue=execution_queue,
+        j=j,
+        url=url,
+        config=config,
+        headers=headers,
+        model_context_length=model_context_length,
+        extra_body=extra_body,
+        upstream_api=effective_api,
+        history_mode=history_mode,
+        tracker=tracker,
+        evaluate_llm=evaluate_llm,
+        all_eval_results=all_eval_results,
+    )
+
+    if verbose_text:
+        all_results = await _run_verbose_text(**run_kwargs)
+    elif verbose:
         all_results = await _run_verbose(
-            con=con,
-            execution_queue=execution_queue,
-            j=j,
-            url=url,
-            config=config,
-            headers=headers,
-            model_context_length=model_context_length,
-            extra_body=extra_body,
+            **run_kwargs,
             recording_states=recording_states,
-            upstream_api=effective_api,
-            history_mode=history_mode,
         )
     else:
         all_results = await _run_progress_bar(
-            con=con,
-            execution_queue=execution_queue,
-            j=j,
-            url=url,
-            config=config,
-            headers=headers,
+            **run_kwargs,
             total_task_executions=total_task_executions,
             total_progress=total_progress,
-            model_context_length=model_context_length,
-            extra_body=extra_body,
-            upstream_api=effective_api,
-            history_mode=history_mode,
         )
+
+    if tracker.aborted:
+        con.print(f"\n  [bold red]{tracker.abort_message()}[/bold red]")
 
     flat_results: list[RequestMetrics] = []
     for task_results in all_results:
@@ -930,6 +1010,9 @@ async def replay_scenario(
 
     con.rule()
     _print_replay_summary(run, scenario, con=con)
+
+    if all_eval_results:
+        _print_eval_summary(all_eval_results, con=con)
 
     if config.output:
         _save_replay_output(config, run, con=con)
@@ -1008,9 +1091,19 @@ async def _run_verbose(
     recording_states: dict[int, _RecordingState],
     upstream_api: str = "openai",
     history_mode: str = "live",
+    tracker: FailureTracker | None = None,
+    evaluate_llm: bool = False,
+    all_eval_results: list | None = None,
 ) -> list:
     """Run the replay with live-updating per-recording verbose display."""
+    from agentic_swarm_bench.scenarios.evaluator import (
+        aggregate_task_evals,
+        evaluate_response,
+    )
+
     use_live_history = history_mode == "live"
+    if tracker is None:
+        tracker = FailureTracker()
 
     live = Live(
         _build_verbose_display(recording_states),
@@ -1043,8 +1136,12 @@ async def _run_verbose(
 
             results: list[RequestMetrics] = []
             actual_history: list[dict] = []
+            per_turn_evals: list[list] = []
 
             for i, entry in enumerate(task.entries):
+                if tracker.aborted:
+                    break
+
                 state.current_req = i + 1
                 state.phase = "prefill"
                 live.update(_build_verbose_display(recording_states))
@@ -1079,6 +1176,7 @@ async def _run_verbose(
                     response_chunks=response_chunks,
                 )
 
+                response_text = ""
                 if use_live_history:
                     response_text = "".join(response_chunks)
                     if response_text:
@@ -1092,9 +1190,22 @@ async def _run_verbose(
                 m.context_tokens = tokens
                 results.append(m)
 
+                _track_request_result(
+                    m, task, response_text, entry.seq, tracker, slot_id, evaluate_response,
+                )
+                if task.evaluate:
+                    turn_evals = evaluate_response(
+                        task.evaluate, response_text, entry.seq,
+                    )
+                    per_turn_evals.append(turn_evals)
+
                 state.phase = "decode"
                 state.decode_tps = m.tok_per_sec or 0.0
                 live.update(_build_verbose_display(recording_states))
+
+            if task.evaluate and per_turn_evals and all_eval_results is not None:
+                agg = aggregate_task_evals(per_turn_evals, task.evaluate)
+                all_eval_results.append((task.name or task.id, agg))
 
             state.done = True
             live.update(_build_verbose_display(recording_states))
@@ -1124,9 +1235,19 @@ async def _run_progress_bar(
     extra_body: dict | None,
     upstream_api: str = "openai",
     history_mode: str = "live",
+    tracker: FailureTracker | None = None,
+    evaluate_llm: bool = False,
+    all_eval_results: list | None = None,
 ) -> list:
     """Run the replay with a simple aggregate progress bar (non-verbose)."""
-    replay_fn = _replay_task_entries_live if history_mode == "live" else _replay_task_entries
+    from agentic_swarm_bench.scenarios.evaluator import (
+        aggregate_task_evals,
+        evaluate_response,
+    )
+
+    use_live_history = history_mode == "live"
+    if tracker is None:
+        tracker = FailureTracker()
 
     with Progress(
         SpinnerColumn(),
@@ -1154,19 +1275,61 @@ async def _run_progress_bar(
                 slot_id: int,
             ) -> list[RequestMetrics]:
                 task, _exec_idx = sched_task
-                return await replay_fn(
-                    client=slot_clients[slot_id],
-                    url=url,
-                    model_override=config.model,
-                    headers=headers,
-                    entries=task.entries,
-                    timeout=config.timeout,
-                    user_id=slot_id,
-                    on_complete=lambda: progress.advance(progress_task_id),
-                    model_context_length=model_context_length,
-                    extra_body=extra_body,
-                    upstream_api=upstream_api,
+
+                if tracker.aborted:
+                    return []
+
+                response_texts: list[str] | None = (
+                    [] if task.evaluate else None
                 )
+
+                if use_live_history:
+                    metrics = await _replay_task_entries_live(
+                        client=slot_clients[slot_id],
+                        url=url,
+                        model_override=config.model,
+                        headers=headers,
+                        entries=task.entries,
+                        timeout=config.timeout,
+                        user_id=slot_id,
+                        on_complete=lambda: progress.advance(progress_task_id),
+                        model_context_length=model_context_length,
+                        extra_body=extra_body,
+                        upstream_api=upstream_api,
+                        response_collector=response_texts,
+                    )
+                else:
+                    metrics = await _replay_task_entries(
+                        client=slot_clients[slot_id],
+                        url=url,
+                        model_override=config.model,
+                        headers=headers,
+                        entries=task.entries,
+                        timeout=config.timeout,
+                        user_id=slot_id,
+                        on_complete=lambda: progress.advance(progress_task_id),
+                        model_context_length=model_context_length,
+                        extra_body=extra_body,
+                        upstream_api=upstream_api,
+                    )
+
+                for i, m in enumerate(metrics):
+                    has_text = response_texts and i < len(response_texts)
+                    resp_text = response_texts[i] if has_text else ""
+                    entry_seq = task.entries[i].seq if i < len(task.entries) else i
+                    _track_request_result(
+                        m, task, resp_text, entry_seq, tracker, slot_id, evaluate_response,
+                    )
+
+                if task.evaluate and response_texts and all_eval_results is not None:
+                    per_turn = []
+                    for i, resp in enumerate(response_texts):
+                        seq = task.entries[i].seq if i < len(task.entries) else i
+                        per_turn.append(evaluate_response(task.evaluate, resp, seq))
+                    agg = aggregate_task_evals(per_turn, task.evaluate)
+                    all_eval_results.append((task.name or task.id, agg))
+
+                return metrics
 
             all_results = await run_work_queue(
                 execution_queue,
@@ -1175,6 +1338,227 @@ async def _run_progress_bar(
             )
 
         progress.remove_task(progress_task_id)
+
+    return all_results
+
+
+def _track_request_result(
+    metrics: RequestMetrics,
+    task: Task,
+    response_text: str,
+    seq: int,
+    tracker: FailureTracker,
+    slot_id: int,
+    evaluate_fn,
+) -> bool:
+    """Track success/failure for early abort. Returns True if the request failed."""
+    if metrics.error:
+        tracker.record_failure(slot_id, metrics.error)
+        return True
+
+    if task.evaluate and response_text:
+        turn_results = evaluate_fn(task.evaluate, response_text, seq)
+        all_failed = turn_results and all(not r.passed for r in turn_results)
+        if all_failed:
+            tracker.record_failure(slot_id, f"eval failed for seq {seq}")
+            return True
+
+    tracker.record_success(slot_id)
+    return False
+
+
+def _print_eval_summary(
+    eval_results: list[tuple[str, list]],
+    con: Console | None = None,
+) -> None:
+    """Print evaluation results summary."""
+    c = con or console
+    c.print("\n[bold]Evaluation Results[/bold]")
+
+    total_tasks = len(eval_results)
+    passed_tasks = 0
+
+    for task_name, results in eval_results:
+        all_passed = all(r.passed for r in results)
+        if all_passed:
+            passed_tasks += 1
+            status = "[green]PASS[/green]"
+        else:
+            status = "[red]FAIL[/red]"
+
+        c.print(f"  {status} {task_name}")
+        for r in results:
+            marker = "[green]✓[/green]" if r.passed else "[red]✗[/red]"
+            c.print(f"    {marker} {r.detail}")
+
+    rate = (passed_tasks / total_tasks * 100) if total_tasks > 0 else 0
+    c.print(f"\n  Eval: {passed_tasks}/{total_tasks} tasks passed ({rate:.0f}%)")
+
+
+# ---------------------------------------------------------------------------
+# Verbose text mode: line-by-line output for AI agents
+# ---------------------------------------------------------------------------
+
+
+async def _run_verbose_text(
+    *,
+    con: Console,
+    execution_queue: list,
+    j: int,
+    url: str,
+    config: BenchmarkConfig,
+    headers: dict,
+    model_context_length: int | None,
+    extra_body: dict | None,
+    upstream_api: str = "openai",
+    history_mode: str = "live",
+    tracker: FailureTracker | None = None,
+    evaluate_llm: bool = False,
+    all_eval_results: list | None = None,
+) -> list:
+    """Run replay printing one plain-text line per event (no Rich Live).
+
+    Designed for AI agents that read terminal output line by line.
+    """
+    from agentic_swarm_bench.scenarios.evaluator import (
+        aggregate_task_evals,
+        evaluate_response,
+    )
+
+    use_live_history = history_mode == "live"
+    if tracker is None:
+        tracker = FailureTracker()
+
+    def _log(msg: str) -> None:
+        _plain_console.print(msg)
+
+    async with contextlib.AsyncExitStack() as stack:
+        slot_clients: list[httpx.AsyncClient] = [
+            await stack.enter_async_context(httpx.AsyncClient())
+            for _ in range(j)
+        ]
+
+        async def _run_schedule_task(
+            sched_task: tuple[Task, int],
+            slot_id: int,
+        ) -> list[RequestMetrics]:
+            task, _exec_idx = sched_task
+
+            if tracker.aborted:
+                return []
+
+            task_label = task.name or task.id
+            _log(
+                f"[task:{task.id}] [slot {slot_id}] started "
+                f"({len(task.entries)} requests)"
+            )
+
+            results: list[RequestMetrics] = []
+            actual_history: list[dict] = []
+            per_turn_evals: list[list] = []
+            ok_count = 0
+            total_decode_tps = 0.0
+
+            for i, entry in enumerate(task.entries):
+                if tracker.aborted:
+                    _log(f"[task:{task.id}] [slot {slot_id}] aborted")
+                    break
+
+                if use_live_history:
+                    prev_entry = task.entries[i - 1] if i > 0 else None
+                    new_client_msgs = _extract_new_client_messages(entry, prev_entry)
+                    actual_history.extend(new_client_msgs)
+                    messages_to_send = list(actual_history)
+                    tokens = sum(len(m.get("content", "")) for m in messages_to_send) // 4
+                else:
+                    messages_to_send = entry.messages
+                    tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+
+                if model_context_length is not None and tokens > model_context_length:
+                    _log(
+                        f"[task:{task.id}] [slot {slot_id}] "
+                        f"[req {i + 1}/{len(task.entries)}] "
+                        f"skipped (exceeds context length)"
+                    )
+                    continue
+
+                response_chunks: list[str] = [] if use_live_history else []
+                model = config.model or entry.model
+                m = await _replay_one_request(
+                    client=slot_clients[slot_id],
+                    url=url,
+                    model=model,
+                    headers=headers,
+                    messages=messages_to_send,
+                    max_tokens=entry.max_tokens,
+                    seq=entry.seq,
+                    timeout=config.timeout,
+                    user_id=slot_id,
+                    extra_body=extra_body,
+                    upstream_api=upstream_api,
+                    response_chunks=response_chunks,
+                )
+
+                response_text = "".join(response_chunks)
+                if use_live_history:
+                    if response_text:
+                        actual_history.append({"role": "assistant", "content": response_text})
+                    else:
+                        fallback = _get_recorded_assistant_message(entry, prev_entry)
+                        if fallback:
+                            actual_history.append(dict(fallback))
+
+                m.context_profile = _bucket_label(tokens)
+                m.context_tokens = tokens
+                results.append(m)
+
+                _track_request_result(
+                    m, task, response_text, entry.seq, tracker, slot_id, evaluate_response,
+                )
+
+                if task.evaluate:
+                    turn_evals = evaluate_response(task.evaluate, response_text, entry.seq)
+                    per_turn_evals.append(turn_evals)
+
+                if m.error:
+                    _log(
+                        f"[task:{task.id}] [slot {slot_id}] "
+                        f"[req {i + 1}/{len(task.entries)}] "
+                        f"ERROR: {m.error[:200]}"
+                    )
+                else:
+                    ok_count += 1
+                    tps = m.tok_per_sec or 0.0
+                    total_decode_tps += tps
+                    _log(
+                        f"[task:{task.id}] [slot {slot_id}] "
+                        f"[req {i + 1}/{len(task.entries)}] "
+                        f"ttft={m.ttft_ms:.0f}ms "
+                        f"decode={tps:.1f}tok/s "
+                        f"completion={m.completion_tokens} "
+                        f"prompt={m.prompt_tokens or tokens} ok"
+                    )
+
+            if task.evaluate and per_turn_evals and all_eval_results is not None:
+                agg = aggregate_task_evals(per_turn_evals, task.evaluate)
+                all_eval_results.append((task_label, agg))
+                for r in agg:
+                    marker = "PASS" if r.passed else "FAIL"
+                    _log(f"[task:{task.id}] [slot {slot_id}] eval {marker}: {r.detail}")
+
+            avg_tps = (total_decode_tps / ok_count) if ok_count > 0 else 0
+            _log(
+                f"[task:{task.id}] [slot {slot_id}] done "
+                f"({ok_count}/{len(task.entries)} ok, avg decode={avg_tps:.1f}tok/s)"
+            )
+
+            return results
+
+        all_results = await run_work_queue(
+            execution_queue,
+            _run_schedule_task,
+            max_concurrent=j,
+        )
 
     return all_results
 

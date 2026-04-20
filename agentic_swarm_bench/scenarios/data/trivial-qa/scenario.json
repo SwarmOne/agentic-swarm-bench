@@ -3,10 +3,35 @@
   "description": "Trivial single-turn Q&A - non-agentic baseline (5 tasks, 1 request each, ~20 tokens)",
   "model": "claude-opus-4-6",
   "tasks": [
-    {"id": "capital-of-france", "name": "What is the capital of France?", "recording": "capital-of-france.jsonl"},
-    {"id": "largest-planet", "name": "What is the largest planet?", "recording": "largest-planet.jsonl"},
-    {"id": "boiling-point", "name": "What is the boiling point of water?", "recording": "boiling-point.jsonl"},
-    {"id": "speed-of-light", "name": "What is the speed of light?", "recording": "speed-of-light.jsonl"},
-    {"id": "binary-to-decimal", "name": "Convert binary 10110 to decimal", "recording": "binary-to-decimal.jsonl"}
+    {
+      "id": "capital-of-france",
+      "name": "What is the capital of France?",
+      "recording": "capital-of-france.jsonl",
+      "evaluate": [{"type": "contains", "value": "Paris"}]
+    },
+    {
+      "id": "largest-planet",
+      "name": "What is the largest planet?",
+      "recording": "largest-planet.jsonl",
+      "evaluate": [{"type": "contains", "value": "Jupiter"}]
+    },
+    {
+      "id": "boiling-point",
+      "name": "What is the boiling point of water?",
+      "recording": "boiling-point.jsonl",
+      "evaluate": [{"type": "contains", "value": "100"}]
+    },
+    {
+      "id": "speed-of-light",
+      "name": "What is the speed of light?",
+      "recording": "speed-of-light.jsonl",
+      "evaluate": [{"type": "regex", "pattern": "3\\s*[×x*]\\s*10|299"}]
+    },
+    {
+      "id": "binary-to-decimal",
+      "name": "Convert binary 10110 to decimal",
+      "recording": "binary-to-decimal.jsonl",
+      "evaluate": [{"type": "contains", "value": "22"}]
+    }
   ]
 }
