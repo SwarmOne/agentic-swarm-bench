@@ -154,11 +154,13 @@ def test_tool_use_block_serialized():
     }
     result = anthropic_to_openai(body, model="test")
     assistant_msg = next(m for m in result["messages"] if m["role"] == "assistant")
+
+    assert "tool_calls" in assistant_msg
+    tc = assistant_msg["tool_calls"][0]
+    assert tc["function"]["name"] == "Read"
     import json
 
-    parsed = json.loads(assistant_msg["content"])
-    assert parsed["type"] == "tool_use"
-    assert parsed["name"] == "Read"
+    assert json.loads(tc["function"]["arguments"]) == {"path": "/foo.py"}
 
 
 def test_tool_result_block_serialized():
@@ -179,12 +181,9 @@ def test_tool_result_block_serialized():
         "max_tokens": 512,
     }
     result = anthropic_to_openai(body, model="test")
-    user_msg = next(m for m in result["messages"] if m["role"] == "user")
-    import json
-
-    parsed = json.loads(user_msg["content"])
-    assert parsed["type"] == "tool_result"
-    assert parsed["content"] == "file contents here"
+    tool_msg = next(m for m in result["messages"] if m["role"] == "tool")
+    assert tool_msg["tool_call_id"] == "tool_123"
+    assert tool_msg["content"] == "file contents here"
 
 
 def test_top_p_passed_through():

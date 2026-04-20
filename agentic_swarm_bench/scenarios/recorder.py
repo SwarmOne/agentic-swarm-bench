@@ -374,14 +374,20 @@ def create_recording_app(
             last_time = None
             upstream_status = None
             upstream_error: str | None = None
+            tool_acc = None
+            stop_reason = "end_turn"
 
             if is_messages_api:
-                from agentic_swarm_bench.proxy.translators import make_anthropic_stream_events
+                from agentic_swarm_bench.proxy.translators import (
+                    StreamingToolCallAccumulator,
+                    make_anthropic_stream_events,
+                )
 
                 msg_id = "msg_" + uuid.uuid4().hex[:24]
                 anth_model = entry.get("model", "unknown")
                 for evt in make_anthropic_stream_events(anth_model, msg_id):
                     yield evt.encode()
+                tool_acc = StreamingToolCallAccumulator()
 
             async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
                 async with client.stream(
@@ -421,6 +427,14 @@ def create_recording_app(
                             continue
 
                         now = time.perf_counter()
+
+                        # Track finish_reason for tool_calls
+                        for choice in chunk.get("choices", []):
+                            finish = choice.get("finish_reason")
+                            if finish == "tool_calls":
+                                stop_reason = "tool_use"
+
+                        # Handle text content deltas
                         for choice in chunk.get("choices", []):
                             content = choice.get("delta", {}).get("content")
                             if not content:
@@ -445,12 +459,29 @@ def create_recording_app(
                             else:
                                 yield f"data: {data_str}\n\n".encode()
 
+                        # Handle tool_calls deltas (OpenAI -> Anthropic)
+                        if is_messages_api and tool_acc is not None:
+                            has_tool_delta = any(
+                                choice.get("delta", {}).get("tool_calls")
+                                for choice in chunk.get("choices", [])
+                            )
+                            if has_tool_delta:
+                                if first_time is None:
+                                    first_time = now
+                                    ttft = (now - t_start) * 1000
+                                last_time = now
+                                token_count += 1
+
+                            tool_events = tool_acc.process_chunk(chunk)
+                            for evt_str in tool_events:
+                                yield evt_str.encode()
+
             if is_messages_api:
                 block_stop = {"type": "content_block_stop", "index": 0}
                 yield (f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n").encode()
                 msg_delta = {
                     "type": "message_delta",
-                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
                     "usage": {"output_tokens": token_count},
                 }
                 yield (f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n").encode()
