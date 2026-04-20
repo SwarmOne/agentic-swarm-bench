@@ -293,6 +293,8 @@ asb replay -e URL -m MODEL --scenario session.jsonl --slice-tokens 1000000
 
 **Cache mode:** The default (`--cache-mode realistic`) preserves the shared prefix so it can be KV-cached, but poisons each user's unique context so it doesn't. Use `--cache-mode allwarm` for all-cached (optimistic) numbers or `--cache-mode allcold` to defeat caching entirely. See [Prefix Cache Poisoning](#prefix-cache-poisoning) for how this works.
 
+**History mode:** The default (`--history-mode live`) captures the server's actual responses during streaming and feeds them into the next turn's conversation history. This is essential for correct prefix-cache measurement when replaying against a model different from the one that made the recording - without it, recorded assistant messages from the original model cause KV-cache prefix mismatches on every turn. Use `--history-mode recorded` for the legacy behavior of sending each entry's recorded messages verbatim.
+
 **Slicing scenarios:** Real sessions grow from small contexts to large ones. `--slice-tokens N` replays requests from the start until cumulative prompt tokens reach N.
 
 Requests are grouped by context size and produce the same metrics as `asb speed` - TTFT, tok/s, ITL, and aggregate throughput.
