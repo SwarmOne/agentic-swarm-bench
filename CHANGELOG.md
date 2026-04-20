@@ -2,6 +2,15 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [3.4.2] - 2026-04-20
+
+### Added
+
+- **Live-history replay mode (`--history-mode live`).** Replay now substitutes actual server responses into subsequent turns' conversation history instead of using the recorded assistant messages. This ensures the KV-cache prefix matches between turns even when replaying against a different model than the one that produced the recording — required for correct prefix-cache benchmarking in cross-model replay. The new mode is the default; pass `--history-mode recorded` for the legacy verbatim behavior.
+- **Full Anthropic tool-call translation in the proxy.** The Anthropic↔OpenAI translator now handles `tool_use`, `tool_result`, tool definitions, `tool_choice`, and streaming tool-call deltas (`input_json_delta`). Previously tool blocks were serialized as raw JSON strings — now they round-trip correctly through the proxy for both non-streaming and streaming responses.
+
+---
+
 ## [3.4.1] - 2026-04-19
 
 ### Fixed
