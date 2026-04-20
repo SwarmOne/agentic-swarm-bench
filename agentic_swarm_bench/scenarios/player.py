@@ -138,11 +138,16 @@ async def _replay_one_request(
     max_retries: int = 0,
     extra_body: dict | None = None,
     upstream_api: str = "openai",
+    response_chunks: list[str] | None = None,
 ) -> RequestMetrics:
     """Replay a single recorded request and collect timing metrics.
 
     When *upstream_api* is ``"anthropic"``, the recorded OpenAI messages are
     translated to Anthropic Messages API format and streamed via ``/v1/messages``.
+
+    When *response_chunks* is provided, text content from the server's response
+    is appended to it.  Callers can ``"".join(response_chunks)`` to reconstruct
+    the full assistant reply (used by live-history replay).
     """
     metrics = RequestMetrics(
         request_id=seq,
@@ -164,6 +169,7 @@ async def _replay_one_request(
             on_complete=on_complete,
             max_retries=max_retries,
             extra_body=extra_body,
+            response_chunks=response_chunks,
         )
 
     capped_tokens = min(max_tokens, 4096)
@@ -239,6 +245,9 @@ async def _replay_one_request(
                         reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                         if not content and not reasoning:
                             continue
+
+                        if content and response_chunks is not None:
+                            response_chunks.append(content)
 
                         nonlocal first_token_time, first_thinking_time, first_visible_time
                         nonlocal last_token_time, token_count, thinking_token_count
@@ -322,11 +331,15 @@ async def _replay_one_request_anthropic(
     on_complete=None,
     max_retries: int = 0,
     extra_body: dict | None = None,
+    response_chunks: list[str] | None = None,
 ) -> RequestMetrics:
     """Replay a single request via Anthropic Messages API.
 
     Translates the recorded OpenAI messages into Anthropic format, streams
     the response from /v1/messages, and parses Anthropic SSE events.
+
+    When *response_chunks* is provided, text content from text_delta events
+    is appended to it for live-history reconstruction.
     """
     system_parts: list[str] = []
     conversation: list[dict] = []
@@ -385,6 +398,8 @@ async def _replay_one_request_anthropic(
             text = None
             if delta.get("type") == "text_delta":
                 text = delta.get("text")
+                if text and response_chunks is not None:
+                    response_chunks.append(text)
             elif delta.get("type") == "thinking_delta":
                 text = delta.get("thinking")
             if text:
@@ -551,6 +566,48 @@ def _compute_bucket_wall_time(requests: list[RequestMetrics]) -> float:
     return max(by_slot.values())
 
 
+def _extract_new_client_messages(
+    current_entry: RecordingEntry,
+    prev_entry: RecordingEntry | None,
+) -> list[dict]:
+    """Extract new client-side messages from the delta between entries.
+
+    In a multi-turn recording, entry N's messages = entry N-1's messages +
+    [assistant_response, new_user_message, ...].  This function returns only
+    the new non-assistant messages (user, tool, system) from that delta, so
+    the caller can combine them with the server's *actual* response instead
+    of the recorded one.
+
+    For the first entry (prev_entry is None), all messages are returned.
+    """
+    if prev_entry is None:
+        return [dict(m) for m in current_entry.messages]
+
+    prev_len = len(prev_entry.messages)
+    delta = current_entry.messages[prev_len:]
+    return [dict(m) for m in delta if m.get("role") != "assistant"]
+
+
+def _get_recorded_assistant_message(
+    current_entry: RecordingEntry,
+    prev_entry: RecordingEntry | None,
+) -> dict | None:
+    """Return the recorded assistant message from the delta, if any.
+
+    Used as a fallback when the server returns an error or empty response
+    so that subsequent entries in the task can still proceed.
+    """
+    if prev_entry is None:
+        return None
+
+    prev_len = len(prev_entry.messages)
+    delta = current_entry.messages[prev_len:]
+    for m in delta:
+        if m.get("role") == "assistant":
+            return m
+    return None
+
+
 async def _replay_task_entries(
     client: httpx.AsyncClient,
     url: str,
@@ -595,6 +652,75 @@ async def _replay_task_entries(
     return results
 
 
+async def _replay_task_entries_live(
+    client: httpx.AsyncClient,
+    url: str,
+    model_override: str,
+    headers: dict,
+    entries: list[RecordingEntry],
+    timeout: float,
+    user_id: int,
+    on_complete=None,
+    model_context_length: int | None = None,
+    extra_body: dict | None = None,
+    upstream_api: str = "openai",
+) -> list[RequestMetrics]:
+    """Replay entries with live history: actual server responses feed the next turn.
+
+    Instead of sending each entry's recorded messages verbatim, this builds
+    the conversation from actual server responses so the KV-cache prefix
+    matches between turns.  Recordings define the *user* side (system prompt,
+    user messages, tool results); the *assistant* side comes from whatever
+    the server actually generates.
+    """
+    actual_history: list[dict] = []
+    results: list[RequestMetrics] = []
+
+    for i, entry in enumerate(entries):
+        prev_entry = entries[i - 1] if i > 0 else None
+        new_client_msgs = _extract_new_client_messages(entry, prev_entry)
+        actual_history.extend(new_client_msgs)
+
+        tokens = sum(len(m.get("content", "")) for m in actual_history) // 4
+
+        if model_context_length is not None and tokens > model_context_length:
+            if on_complete:
+                on_complete()
+            continue
+
+        response_chunks: list[str] = []
+        model = model_override or entry.model
+        m = await _replay_one_request(
+            client=client,
+            url=url,
+            model=model,
+            headers=headers,
+            messages=list(actual_history),
+            max_tokens=entry.max_tokens,
+            seq=entry.seq,
+            timeout=timeout,
+            user_id=user_id,
+            on_complete=on_complete,
+            extra_body=extra_body,
+            upstream_api=upstream_api,
+            response_chunks=response_chunks,
+        )
+
+        response_text = "".join(response_chunks)
+        if response_text:
+            actual_history.append({"role": "assistant", "content": response_text})
+        else:
+            fallback = _get_recorded_assistant_message(entry, prev_entry)
+            if fallback:
+                actual_history.append(dict(fallback))
+
+        m.context_profile = _bucket_label(tokens)
+        m.context_tokens = tokens
+        results.append(m)
+
+    return results
+
+
 async def replay_scenario(
     config: BenchmarkConfig,
     scenario_path: str,
@@ -604,6 +730,7 @@ async def replay_scenario(
     model_context_length: int | None = None,
     schedule: Schedule | None = None,
     cache_mode: str = "realistic",
+    history_mode: str = "live",
     extra_body: dict | None = None,
     json_stdout: bool = False,
     verbose: bool = False,
@@ -631,6 +758,11 @@ async def replay_scenario(
       realistic  Preserve shared LCP, poison divergent per-user portion (default).
       allcold    Poison everything (lcp_len=0), every request defeats the cache.
       allwarm    No poisoning, requests sent as recorded.
+
+    history_mode:
+      live       Build conversation from actual server responses so the
+                 KV-cache prefix matches between turns (default).
+      recorded   Send each entry's recorded messages verbatim (legacy behavior).
     """
     con = Console(stderr=True) if json_stdout else console
 
@@ -698,6 +830,11 @@ async def replay_scenario(
         "allwarm": "[green]allwarm[/green] (no poisoning, cache allowed)",
     }
     con.print(f"  Cache mode: {cache_mode_labels.get(cache_mode, cache_mode)}")
+    history_mode_labels = {
+        "live": "[green]live[/green] (actual server responses feed next turn)",
+        "recorded": "[yellow]recorded[/yellow] (verbatim recorded messages)",
+    }
+    con.print(f"  History mode: {history_mode_labels.get(history_mode, history_mode)}")
     if slice_tokens is not None:
         con.print(f"  Slice: ≤{slice_tokens:,} prompt tokens per recording")
     if model_context_length is not None:
@@ -741,6 +878,7 @@ async def replay_scenario(
             extra_body=extra_body,
             recording_states=recording_states,
             upstream_api=effective_api,
+            history_mode=history_mode,
         )
     else:
         all_results = await _run_progress_bar(
@@ -755,6 +893,7 @@ async def replay_scenario(
             model_context_length=model_context_length,
             extra_body=extra_body,
             upstream_api=effective_api,
+            history_mode=history_mode,
         )
 
     flat_results: list[RequestMetrics] = []
@@ -868,8 +1007,11 @@ async def _run_verbose(
     extra_body: dict | None,
     recording_states: dict[int, _RecordingState],
     upstream_api: str = "openai",
+    history_mode: str = "live",
 ) -> list:
     """Run the replay with live-updating per-recording verbose display."""
+    use_live_history = history_mode == "live"
+
     live = Live(
         _build_verbose_display(recording_states),
         console=con,
@@ -900,29 +1042,52 @@ async def _run_verbose(
             live.update(_build_verbose_display(recording_states))
 
             results: list[RequestMetrics] = []
+            actual_history: list[dict] = []
+
             for i, entry in enumerate(task.entries):
                 state.current_req = i + 1
                 state.phase = "prefill"
                 live.update(_build_verbose_display(recording_states))
 
-                tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+                if use_live_history:
+                    prev_entry = task.entries[i - 1] if i > 0 else None
+                    new_client_msgs = _extract_new_client_messages(entry, prev_entry)
+                    actual_history.extend(new_client_msgs)
+                    messages_to_send = list(actual_history)
+                    tokens = sum(len(m.get("content", "")) for m in messages_to_send) // 4
+                else:
+                    messages_to_send = entry.messages
+                    tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+
                 if model_context_length is not None and tokens > model_context_length:
                     continue
 
+                response_chunks: list[str] | None = [] if use_live_history else None
                 model = config.model or entry.model
                 m = await _replay_one_request(
                     client=slot_clients[slot_id],
                     url=url,
                     model=model,
                     headers=headers,
-                    messages=entry.messages,
+                    messages=messages_to_send,
                     max_tokens=entry.max_tokens,
                     seq=entry.seq,
                     timeout=config.timeout,
                     user_id=slot_id,
                     extra_body=extra_body,
                     upstream_api=upstream_api,
+                    response_chunks=response_chunks,
                 )
+
+                if use_live_history:
+                    response_text = "".join(response_chunks)
+                    if response_text:
+                        actual_history.append({"role": "assistant", "content": response_text})
+                    else:
+                        fallback = _get_recorded_assistant_message(entry, prev_entry)
+                        if fallback:
+                            actual_history.append(dict(fallback))
+
                 m.context_profile = _bucket_label(tokens)
                 m.context_tokens = tokens
                 results.append(m)
@@ -958,8 +1123,11 @@ async def _run_progress_bar(
     model_context_length: int | None,
     extra_body: dict | None,
     upstream_api: str = "openai",
+    history_mode: str = "live",
 ) -> list:
     """Run the replay with a simple aggregate progress bar (non-verbose)."""
+    replay_fn = _replay_task_entries_live if history_mode == "live" else _replay_task_entries
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -986,7 +1154,7 @@ async def _run_progress_bar(
                 slot_id: int,
             ) -> list[RequestMetrics]:
                 task, _exec_idx = sched_task
-                return await _replay_task_entries(
+                return await replay_fn(
                     client=slot_clients[slot_id],
                     url=url,
                     model_override=config.model,

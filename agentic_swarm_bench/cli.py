@@ -770,6 +770,17 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     ),
 )
 @click.option(
+    "--history-mode",
+    type=click.Choice(["live", "recorded"]),
+    default="live",
+    show_default=True,
+    help=(
+        "History mode: live (use actual server responses in next turn's history, "
+        "fixes prefix cache for cross-model replay), "
+        "recorded (send recorded messages verbatim, legacy behavior)"
+    ),
+)
+@click.option(
     "--verbose", "-V", is_flag=True,
     help="Show live per-task progress with phase, request count, and decode tok/s",
 )
@@ -797,6 +808,7 @@ def replay(
     policy,
     seed,
     cache_mode,
+    history_mode,
     verbose,
 ):
     """Replay a recorded scenario against any endpoint.
@@ -833,6 +845,15 @@ def replay(
                  request defeats the cache entirely.
       allwarm    No poisoning. Requests sent as recorded; the server
                  can serve from KV cache freely.
+
+    \b
+    History modes:
+      live       Use actual server responses in next turn's history so
+                 the KV-cache prefix matches between turns (default).
+                 Required for correct prefix-cache benchmarking when
+                 replaying against a model different from the recording.
+      recorded   Send each entry's recorded messages verbatim.  Legacy
+                 behavior -- breaks prefix cache for cross-model replay.
 
     \b
     Examples:
@@ -882,6 +903,7 @@ def replay(
             model_context_length=model_context_length,
             schedule=sched,
             cache_mode=cache_mode,
+            history_mode=history_mode,
             extra_body=merged_extra,
             json_stdout=json_stdout,
             verbose=verbose,
