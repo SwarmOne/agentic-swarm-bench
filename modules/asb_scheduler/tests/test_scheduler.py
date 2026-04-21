@@ -6,10 +6,9 @@ import asyncio
 import json
 
 import pytest
+from asb_scheduler.interleaved import build_interleaved_order, run_interleaved_work_queue
 from click.testing import CliRunner
 
-from asb_scheduler.interleaved import build_interleaved_order, run_interleaved_work_queue
-from asb_scheduler.random_policy import build_random_queue
 from agentic_swarm_bench.cli import main
 from agentic_swarm_bench.scenarios.registry import Task
 from agentic_swarm_bench.scenarios.schedule import (

@@ -1,7 +1,5 @@
 """Tests for proxy translation and padding."""
 
-import pytest
-
 from agentic_swarm_bench.proxy.padding import (
     count_tokens_approx,
     pad_messages_to_target,

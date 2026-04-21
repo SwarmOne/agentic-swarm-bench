@@ -138,7 +138,6 @@ def strip_md_markers(staging: Path) -> int:
         lines = md_file.read_text().splitlines(keepends=True)
         out: list[str] = []
         inside_private = False
-        inside_oss = False
         changed = False
 
         for line in lines:
@@ -153,11 +152,9 @@ def strip_md_markers(staging: Path) -> int:
                 continue
 
             if MD_OSS_START.match(line):
-                inside_oss = True
                 changed = True
                 continue
             if MD_OSS_END.match(line):
-                inside_oss = False
                 continue
 
             out.append(line)

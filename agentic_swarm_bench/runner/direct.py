@@ -30,7 +30,6 @@ from agentic_swarm_bench.metrics.collector import (
     is_context_length_error,
 )
 from agentic_swarm_bench.metrics.stats import ScenarioStats, analyze_scenario
-
 from agentic_swarm_bench.tasks.context.codebase_context import build_messages
 from agentic_swarm_bench.tasks.registry import get_tasks
 

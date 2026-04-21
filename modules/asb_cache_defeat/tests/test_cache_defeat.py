@@ -29,7 +29,6 @@ from agentic_swarm_bench.proxy.context import pad_messages_to_target
 from agentic_swarm_bench.report.markdown import generate_report
 from agentic_swarm_bench.scenarios.registry import RecordingEntry, Task
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -41,11 +41,13 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/oss_deploy -o StrictHostKeyChecking=no"
 
           cd oss-staging
-          git init
+          git init -b main
+          git config user.name "SwarmOne Bot"
+          git config user.email "bot@swarmone.ai"
           git add -A
           git commit -m "OSS release from $(git -C .. rev-parse --short HEAD)"
           git remote add public git@github.com:SwarmOne/agentic-swarm-bench.git
-          git push -f public HEAD:main
+          git push -f public main
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"

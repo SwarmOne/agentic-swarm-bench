@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 try:
     from asb_cache_defeat.live_poison import (
         compute_scenario_lcp as _real_compute_scenario_lcp,
+    )
+    from asb_cache_defeat.live_poison import (
         poison_task_execution as _real_poison_task_execution,
     )
 

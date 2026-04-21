@@ -415,8 +415,10 @@ class TestResponseChunksAnthropic:
         """Thinking content should be captured in thinking_chunks."""
         events = _anthropic_sse_bytes(
             {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
-            {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "let me "}},
-            {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "think..."}},
+            {"type": "content_block_delta", "delta": {
+                "type": "thinking_delta", "thinking": "let me "}},
+            {"type": "content_block_delta", "delta": {
+                "type": "thinking_delta", "thinking": "think..."}},
             {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "answer"}},
             {"type": "message_delta", "usage": {"output_tokens": 3}},
         )

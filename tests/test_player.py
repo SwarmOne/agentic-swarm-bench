@@ -6,8 +6,6 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from agentic_swarm_bench.metrics.collector import RequestMetrics
 from agentic_swarm_bench.scenarios.player import (
     _bucket_label,
@@ -17,7 +15,6 @@ from agentic_swarm_bench.scenarios.player import (
     _slice_entries,
     _strip_cache_control,
 )
-from agentic_swarm_bench.scenarios.registry import RecordingEntry, Task
 
 
 def _run(coro):

@@ -67,13 +67,15 @@ from agentic_swarm_bench.scenarios.schedule import (
     run_work_queue,
 )
 
-
 console = Console()
 _plain_console = Console(highlight=False, markup=False)
 
 
 def _load_evaluator():
-    """Lazily load the evaluator module. Returns (evaluate_response, aggregate_task_evals, EvalResult) or no-op stubs."""
+    """Lazily load the evaluator module.
+
+    Returns (evaluate_response, aggregate_task_evals, EvalResult) or no-op stubs.
+    """
     try:
         from agentic_swarm_bench.scenarios.evaluator import (
             EvalResult,

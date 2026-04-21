@@ -13,10 +13,11 @@ from agentic_swarm_bench.config import (
     SUITE_CONFIGS,
     build_config,
 )
+
 _HAS_SCHEDULER = False
 _HAS_EVALUATOR = False
 # --- PRIVATE ---
-from agentic_swarm_bench.modules import has_module
+from agentic_swarm_bench.modules import has_module  # noqa: E402
 
 _HAS_SCHEDULER = has_module("scheduler")
 try:
