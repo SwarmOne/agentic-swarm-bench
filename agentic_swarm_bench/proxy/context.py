@@ -7,8 +7,6 @@ Provides:
 
 from __future__ import annotations
 
-import time
-
 from agentic_swarm_bench.tasks.context.codebase_context import build_context_block
 
 
@@ -48,6 +46,8 @@ def pad_messages_to_target(
     # --- PRIVATE ---
     if defeat_cache:
         try:
+            import time
+
             from asb_cache_defeat.padding_poison import poison_text_spaces
 
             seed = f"proxy-{time.time_ns()}"
