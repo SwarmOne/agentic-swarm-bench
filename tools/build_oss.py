@@ -32,6 +32,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 STRIP_DIRS = [
     "modules",
     "skill",
+    ".cursor",
+    ".claude",
 ]
 
 STRIP_FILES = [

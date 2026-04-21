@@ -38,12 +38,14 @@ jobs:
           PUBLIC_URL="https://x-access-token:${OSS_PAT}@github.com/SwarmOne/agentic-swarm-bench.git"
           SHORT_SHA="$(git rev-parse --short HEAD)"
           COMMIT_MSG="$(git log -1 --format='%s')"
+          AUTHOR_NAME="$(git log -1 --format='%an')"
+          AUTHOR_EMAIL="$(git log -1 --format='%ae')"
 
           # Clone existing public repo to preserve history
           git clone "$PUBLIC_URL" public-repo
           cd public-repo
-          git config user.name "SwarmOne Bot"
-          git config user.email "bot@swarmone.ai"
+          git config user.name "$AUTHOR_NAME"
+          git config user.email "$AUTHOR_EMAIL"
 
           # Replace all tracked files with the new OSS build
           git rm -rf . > /dev/null 2>&1 || true

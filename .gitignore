@@ -30,3 +30,5 @@ LAUNCH.md
 LAUNCH*.md
 *_launch*.md
 cursor_*.md
+.cursor/*
+.claude/*

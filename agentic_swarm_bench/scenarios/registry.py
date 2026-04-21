@@ -74,7 +74,7 @@ class Task:
 
     @property
     def total_tokens_approx(self) -> int:
-        return sum(sum(len(m.get("content", "")) for m in e.messages) // 4 for e in self.entries)
+        return sum(sum(len(m.get("content") or "") for m in e.messages) // 4 for e in self.entries)
 
     @property
     def experiment_ids(self) -> list[str]:
