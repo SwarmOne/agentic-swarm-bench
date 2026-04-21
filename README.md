@@ -297,60 +297,14 @@ asb replay -e URL -m MODEL --scenario session.jsonl --slice-tokens 1000000
 
 **Slicing scenarios:** Real sessions grow from small contexts to large ones. `--slice-tokens N` replays requests from the start until cumulative prompt tokens reach N.
 
-**Output modes:** `--verbose` (`-V`) shows a Rich live-updating table. `--verbose-text` (`--VV`) prints one plain-text line per event with no ANSI cursor movement - designed for AI agents or CI logs that consume terminal output line by line:
+**Output modes:** `--verbose` (`-V`) shows a Rich live-updating table with per-task progress, phase, request counts, and decode tok/s.
 
-```bash
-asb replay -e URL -m MODEL --scenario trivial-qa --VV
-```
-
-**Early abort:** `--max-consecutive-failures N` stops the entire run if any worker slot hits N consecutive failures (HTTP errors, timeouts, or evaluation failures). Useful when pointing at an endpoint that may be down or producing garbage:
+**Early abort:** `--max-consecutive-failures N` stops the entire run if any worker slot hits N consecutive failures (HTTP errors, timeouts). Useful when pointing at an endpoint that may be down or producing garbage:
 
 ```bash
 asb replay -e URL -m MODEL --scenario js-coding-opus --max-consecutive-failures 5
 ```
 
-#### Answer Evaluation
-
-Scenario manifests can include `evaluate` directives on each task to check whether the model's response is correct:
-
-```json
-{
-  "tasks": [
-    {
-      "id": "capital-of-france",
-      "name": "What is the capital of France?",
-      "recording": "capital-of-france.jsonl",
-      "evaluate": [
-        {"type": "contains", "value": "Paris"},
-        {"type": "regex", "pattern": "capital.*Paris|Paris.*capital"},
-        {"type": "llm", "prompt": "Does the response correctly name Paris as the capital?"}
-      ]
-    }
-  ]
-}
-```
-
-Three evaluation types are supported:
-
-| Type       | What it checks                                                                 | Runs by default |
-| ---------- | ------------------------------------------------------------------------------ | --------------- |
-| `contains` | Substring match (case-sensitive by default; set `"case_sensitive": false`)      | Yes             |
-| `regex`    | Python `re.search` against the response text                                   | Yes             |
-| `llm`      | Sends the response + prompt to the endpoint and parses YES/NO                  | Only with `--evaluate-llm` |
-
-Directives without a `"seq"` field are checked against every turn's response and pass if any turn matches. Add `"seq": N` to target a specific request in the recording.
-
-`contains` and `regex` evaluations run automatically whenever directives are present. LLM evaluation requires the `--evaluate-llm` flag because it sends extra requests to the endpoint:
-
-```bash
-asb replay -e URL -m MODEL --scenario trivial-qa --evaluate-llm
-```
-
-When evaluation directives are present, `--history-mode recorded` is silently upgraded to `live` (evaluation needs the actual server response, not the recorded one).
-
-The built-in `trivial-qa` scenario ships with evaluate directives so you can try this immediately.
-
-Requests are grouped by context size and produce the same metrics as `asb speed` - TTFT, tok/s, ITL, and aggregate throughput.
 
 #### `asb list-scenarios` - Browse Built-in Scenarios
 
