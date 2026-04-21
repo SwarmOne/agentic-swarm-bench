@@ -6,8 +6,10 @@ import asyncio
 import json
 
 from agentic_swarm_bench.scenarios.player import (
+    _build_assistant_message,
     _extract_new_client_messages,
     _get_recorded_assistant_message,
+    _message_content_len,
     _replay_one_request,
     _replay_task_entries,
     _replay_task_entries_live,
@@ -265,6 +267,46 @@ class TestResponseChunksOpenAI:
         assert "thinking" not in text
         assert "visible answer" in text
 
+    def test_reasoning_captured_in_thinking_chunks(self):
+        reasoning_chunk = {"choices": [{"delta": {"reasoning_content": "deep thought"}}]}
+        lines = _make_sse_lines([reasoning_chunk, _sse_chunk("visible")])
+        response_chunks: list[str] = []
+        thinking_chunks: list[str] = []
+        _run(_replay_one_request(
+            client=FakeClient(FakeStreamResponse(lines)),
+            url="http://test/v1/chat/completions",
+            model="test",
+            headers={},
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            seq=1,
+            timeout=30.0,
+            response_chunks=response_chunks,
+            thinking_chunks=thinking_chunks,
+        ))
+        assert "".join(response_chunks) == "visible"
+        assert "".join(thinking_chunks) == "deep thought"
+
+    def test_thinking_chunks_none_backward_compat(self):
+        """thinking_chunks=None should not break anything."""
+        reasoning_chunk = {"choices": [{"delta": {"reasoning_content": "thought"}}]}
+        lines = _make_sse_lines([reasoning_chunk, _sse_chunk("text")])
+        response_chunks: list[str] = []
+        m = _run(_replay_one_request(
+            client=FakeClient(FakeStreamResponse(lines)),
+            url="http://test/v1/chat/completions",
+            model="test",
+            headers={},
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            seq=1,
+            timeout=30.0,
+            response_chunks=response_chunks,
+            thinking_chunks=None,
+        ))
+        assert "".join(response_chunks) == "text"
+        assert m.error is None
+
     def test_error_response_leaves_chunks_empty(self):
         resp = FakeStreamResponse([], status_code=500, body=b"Internal Server Error")
         chunks: list[str] = []
@@ -346,7 +388,8 @@ class TestResponseChunksAnthropic:
         assert "".join(chunks) == "Hello world!"
         assert m.error is None
 
-    def test_thinking_delta_not_captured(self):
+    def test_thinking_delta_not_in_response_chunks(self):
+        """Thinking content should NOT appear in response_chunks (visible text only)."""
         events = _anthropic_sse_bytes(
             {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
             {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "hmm"}},
@@ -367,6 +410,33 @@ class TestResponseChunksAnthropic:
             response_chunks=chunks,
         ))
         assert "".join(chunks) == "answer"
+
+    def test_thinking_delta_captured_in_thinking_chunks(self):
+        """Thinking content should be captured in thinking_chunks."""
+        events = _anthropic_sse_bytes(
+            {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+            {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "let me "}},
+            {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "think..."}},
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "answer"}},
+            {"type": "message_delta", "usage": {"output_tokens": 3}},
+        )
+        response_chunks: list[str] = []
+        thinking_chunks: list[str] = []
+        _run(_replay_one_request(
+            client=FakeAnthropicClient(FakeAnthropicStreamResponse(events)),
+            url="http://test",
+            model="test",
+            headers={},
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            seq=1,
+            timeout=30.0,
+            upstream_api="anthropic",
+            response_chunks=response_chunks,
+            thinking_chunks=thinking_chunks,
+        ))
+        assert "".join(response_chunks) == "answer"
+        assert "".join(thinking_chunks) == "let me think..."
 
     def test_none_response_chunks_backward_compat(self):
         events = _anthropic_sse_bytes(
@@ -574,3 +644,140 @@ class TestReplayTaskEntriesRecorded:
         # Turn 2 should have the RECORDED assistant, not the server's response
         turn2_msgs = client.captured_messages[1]
         assert turn2_msgs[2]["content"] == "Recorded answer 1"
+
+
+# =========================================================================
+# _build_assistant_message
+# =========================================================================
+
+
+class TestBuildAssistantMessage:
+    def test_plain_text_no_thinking(self):
+        msg = _build_assistant_message("hello", "", "openai")
+        assert msg == {"role": "assistant", "content": "hello"}
+
+    def test_openai_with_thinking(self):
+        msg = _build_assistant_message("answer", "reasoning", "openai")
+        assert msg["role"] == "assistant"
+        assert msg["content"] == "answer"
+        assert msg["reasoning_content"] == "reasoning"
+
+    def test_anthropic_with_thinking(self):
+        msg = _build_assistant_message("answer", "reasoning", "anthropic")
+        assert msg["role"] == "assistant"
+        assert isinstance(msg["content"], list)
+        assert len(msg["content"]) == 2
+        assert msg["content"][0] == {"type": "thinking", "thinking": "reasoning"}
+        assert msg["content"][1] == {"type": "text", "text": "answer"}
+
+    def test_anthropic_no_thinking_falls_back_to_plain(self):
+        msg = _build_assistant_message("answer", "", "anthropic")
+        assert msg == {"role": "assistant", "content": "answer"}
+
+    def test_empty_response_with_thinking(self):
+        msg = _build_assistant_message("", "only thinking", "openai")
+        assert msg["reasoning_content"] == "only thinking"
+        assert msg["content"] == ""
+
+
+# =========================================================================
+# _message_content_len
+# =========================================================================
+
+
+class TestMessageContentLen:
+    def test_plain_string(self):
+        assert _message_content_len({"content": "hello"}) == 5
+
+    def test_empty_string(self):
+        assert _message_content_len({"content": ""}) == 0
+
+    def test_missing_content(self):
+        assert _message_content_len({"role": "user"}) == 0
+
+    def test_anthropic_blocks(self):
+        msg = {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "1234567890"},
+                {"type": "text", "text": "abcde"},
+            ],
+        }
+        assert _message_content_len(msg) == 15
+
+    def test_openai_reasoning_content(self):
+        msg = {
+            "role": "assistant",
+            "content": "visible",
+            "reasoning_content": "hidden",
+        }
+        assert _message_content_len(msg) == 13  # 7 + 6
+
+    def test_anthropic_blocks_with_no_reasoning_field(self):
+        """List content without a reasoning_content field."""
+        msg = {
+            "content": [{"type": "text", "text": "abc"}],
+        }
+        assert _message_content_len(msg) == 3
+
+
+# =========================================================================
+# _replay_task_entries_live -- thinking in history
+# =========================================================================
+
+
+def _make_reasoning_response(reasoning: str, content: str) -> FakeStreamResponse:
+    """Build a fake OpenAI response with reasoning_content + content chunks."""
+    reasoning_chunk = {"choices": [{"delta": {"reasoning_content": reasoning}}]}
+    content_chunk = {"choices": [{"delta": {"content": content}}]}
+    return FakeStreamResponse(_make_sse_lines([reasoning_chunk, content_chunk]))
+
+
+class TestLiveHistoryWithThinking:
+    def test_openai_thinking_in_history(self):
+        """OpenAI reasoning_content should appear as reasoning_content in history."""
+        entries = _make_growing_entries(2)
+
+        client = SequentialFakeClient([
+            _make_reasoning_response("thought 1", "answer 1"),
+            _make_reasoning_response("thought 2", "answer 2"),
+        ])
+
+        _run(_replay_task_entries_live(
+            client=client,
+            url="http://test/v1/chat/completions",
+            model_override="test",
+            headers={},
+            entries=entries,
+            timeout=30.0,
+            user_id=0,
+        ))
+
+        # Turn 2's messages should contain the thinking from turn 1
+        turn2_msgs = client.captured_messages[1]
+        assistant_msg = turn2_msgs[2]
+        assert assistant_msg["role"] == "assistant"
+        assert assistant_msg["content"] == "answer 1"
+        assert assistant_msg["reasoning_content"] == "thought 1"
+
+    def test_no_thinking_plain_history(self):
+        """Without thinking, history should still be plain string content."""
+        entries = _make_growing_entries(2)
+        client = SequentialFakeClient([
+            _make_fake_response("answer 1"),
+            _make_fake_response("answer 2"),
+        ])
+
+        _run(_replay_task_entries_live(
+            client=client,
+            url="http://test/v1/chat/completions",
+            model_override="test",
+            headers={},
+            entries=entries,
+            timeout=30.0,
+            user_id=0,
+        ))
+
+        turn2_msgs = client.captured_messages[1]
+        assistant_msg = turn2_msgs[2]
+        assert assistant_msg == {"role": "assistant", "content": "answer 1"}

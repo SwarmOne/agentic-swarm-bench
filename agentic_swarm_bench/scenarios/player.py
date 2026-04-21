@@ -64,6 +64,8 @@ from agentic_swarm_bench.scenarios.registry import (
 from agentic_swarm_bench.scenarios.schedule import (
     Schedule,
     build_execution_queue,
+    build_interleaved_order,
+    run_interleaved_work_queue,
     run_work_queue,
 )
 
@@ -182,6 +184,7 @@ async def _replay_one_request(
     extra_body: dict | None = None,
     upstream_api: str = "openai",
     response_chunks: list[str] | None = None,
+    thinking_chunks: list[str] | None = None,
 ) -> RequestMetrics:
     """Replay a single recorded request and collect timing metrics.
 
@@ -191,6 +194,9 @@ async def _replay_one_request(
     When *response_chunks* is provided, text content from the server's response
     is appended to it.  Callers can ``"".join(response_chunks)`` to reconstruct
     the full assistant reply (used by live-history replay).
+
+    When *thinking_chunks* is provided, reasoning/thinking content is appended
+    to it so callers can reconstruct thinking for the assistant history entry.
     """
     metrics = RequestMetrics(
         request_id=seq,
@@ -213,6 +219,7 @@ async def _replay_one_request(
             max_retries=max_retries,
             extra_body=extra_body,
             response_chunks=response_chunks,
+            thinking_chunks=thinking_chunks,
         )
 
     capped_tokens = min(max_tokens, 4096)
@@ -291,6 +298,8 @@ async def _replay_one_request(
 
                         if content and response_chunks is not None:
                             response_chunks.append(content)
+                        if reasoning and thinking_chunks is not None:
+                            thinking_chunks.append(reasoning)
 
                         nonlocal first_token_time, first_thinking_time, first_visible_time
                         nonlocal last_token_time, token_count, thinking_token_count
@@ -375,6 +384,7 @@ async def _replay_one_request_anthropic(
     max_retries: int = 0,
     extra_body: dict | None = None,
     response_chunks: list[str] | None = None,
+    thinking_chunks: list[str] | None = None,
 ) -> RequestMetrics:
     """Replay a single request via Anthropic Messages API.
 
@@ -383,6 +393,9 @@ async def _replay_one_request_anthropic(
 
     When *response_chunks* is provided, text content from text_delta events
     is appended to it for live-history reconstruction.
+
+    When *thinking_chunks* is provided, thinking content from thinking_delta
+    events is appended for assistant history reconstruction.
     """
     system_parts: list[str] = []
     conversation: list[dict] = []
@@ -445,6 +458,8 @@ async def _replay_one_request_anthropic(
                     response_chunks.append(text)
             elif delta.get("type") == "thinking_delta":
                 text = delta.get("thinking")
+                if text and thinking_chunks is not None:
+                    thinking_chunks.append(text)
             if text:
                 now = time.perf_counter()
                 chunk_tokens = _estimate_tokens(text)
@@ -609,6 +624,55 @@ def _compute_bucket_wall_time(requests: list[RequestMetrics]) -> float:
     return max(by_slot.values())
 
 
+def _message_content_len(msg: dict) -> int:
+    """Character length of a message's content, handling structured blocks.
+
+    Handles plain string content, Anthropic-style list-of-blocks content
+    (thinking + text blocks), and the OpenAI reasoning_content field.
+    """
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        total = len(content)
+    elif isinstance(content, list):
+        total = sum(
+            len(block.get("text", "") or block.get("thinking", ""))
+            for block in content
+            if isinstance(block, dict)
+        )
+    else:
+        total = 0
+    total += len(msg.get("reasoning_content", ""))
+    return total
+
+
+def _build_assistant_message(
+    response_text: str,
+    thinking_text: str,
+    upstream_api: str,
+) -> dict:
+    """Build an assistant history entry that preserves thinking content.
+
+    Anthropic format uses content blocks; OpenAI format uses a sibling
+    ``reasoning_content`` field. Without thinking, falls back to a plain
+    string ``content``.
+    """
+    if upstream_api == "anthropic" and thinking_text:
+        return {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": thinking_text},
+                {"type": "text", "text": response_text},
+            ],
+        }
+    if thinking_text:
+        return {
+            "role": "assistant",
+            "content": response_text,
+            "reasoning_content": thinking_text,
+        }
+    return {"role": "assistant", "content": response_text}
+
+
 def _extract_new_client_messages(
     current_entry: RecordingEntry,
     prev_entry: RecordingEntry | None,
@@ -729,7 +793,7 @@ async def _replay_task_entries_live(
         new_client_msgs = _extract_new_client_messages(entry, prev_entry)
         actual_history.extend(new_client_msgs)
 
-        tokens = sum(len(m.get("content", "")) for m in actual_history) // 4
+        tokens = sum(_message_content_len(m) for m in actual_history) // 4
 
         if model_context_length is not None and tokens > model_context_length:
             if response_collector is not None:
@@ -739,6 +803,7 @@ async def _replay_task_entries_live(
             continue
 
         response_chunks: list[str] = []
+        thinking_chunks: list[str] = []
         model = model_override or entry.model
         m = await _replay_one_request(
             client=client,
@@ -754,14 +819,18 @@ async def _replay_task_entries_live(
             extra_body=extra_body,
             upstream_api=upstream_api,
             response_chunks=response_chunks,
+            thinking_chunks=thinking_chunks,
         )
 
         response_text = "".join(response_chunks)
+        thinking_text = "".join(thinking_chunks)
         if response_collector is not None:
             response_collector.append(response_text)
 
-        if response_text:
-            actual_history.append({"role": "assistant", "content": response_text})
+        if response_text or thinking_text:
+            actual_history.append(
+                _build_assistant_message(response_text, thinking_text, upstream_api)
+            )
         else:
             fallback = _get_recorded_assistant_message(entry, prev_entry)
             if fallback:
@@ -959,7 +1028,13 @@ async def replay_scenario(
         all_eval_results=all_eval_results,
     )
 
-    if verbose_text:
+    if schedule.policy == "interleaved_random":
+        effective_seed = schedule.seed
+        all_results = await _run_interleaved(
+            **run_kwargs,
+            seed=effective_seed,
+        )
+    elif verbose_text:
         all_results = await _run_verbose_text(**run_kwargs)
     elif verbose:
         all_results = await _run_verbose(
@@ -1151,7 +1226,7 @@ async def _run_verbose(
                     new_client_msgs = _extract_new_client_messages(entry, prev_entry)
                     actual_history.extend(new_client_msgs)
                     messages_to_send = list(actual_history)
-                    tokens = sum(len(m.get("content", "")) for m in messages_to_send) // 4
+                    tokens = sum(_message_content_len(m) for m in messages_to_send) // 4
                 else:
                     messages_to_send = entry.messages
                     tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
@@ -1160,6 +1235,7 @@ async def _run_verbose(
                     continue
 
                 response_chunks: list[str] | None = [] if use_live_history else None
+                thinking_chunks: list[str] | None = [] if use_live_history else None
                 model = config.model or entry.model
                 m = await _replay_one_request(
                     client=slot_clients[slot_id],
@@ -1174,13 +1250,17 @@ async def _run_verbose(
                     extra_body=extra_body,
                     upstream_api=upstream_api,
                     response_chunks=response_chunks,
+                    thinking_chunks=thinking_chunks,
                 )
 
                 response_text = ""
                 if use_live_history:
                     response_text = "".join(response_chunks)
-                    if response_text:
-                        actual_history.append({"role": "assistant", "content": response_text})
+                    thinking_text = "".join(thinking_chunks)
+                    if response_text or thinking_text:
+                        actual_history.append(
+                            _build_assistant_message(response_text, thinking_text, upstream_api)
+                        )
                     else:
                         fallback = _get_recorded_assistant_message(entry, prev_entry)
                         if fallback:
@@ -1469,7 +1549,7 @@ async def _run_verbose_text(
                     new_client_msgs = _extract_new_client_messages(entry, prev_entry)
                     actual_history.extend(new_client_msgs)
                     messages_to_send = list(actual_history)
-                    tokens = sum(len(m.get("content", "")) for m in messages_to_send) // 4
+                    tokens = sum(_message_content_len(m) for m in messages_to_send) // 4
                 else:
                     messages_to_send = entry.messages
                     tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
@@ -1482,7 +1562,8 @@ async def _run_verbose_text(
                     )
                     continue
 
-                response_chunks: list[str] = [] if use_live_history else []
+                response_chunks: list[str] = []
+                thinking_chunks: list[str] = []
                 model = config.model or entry.model
                 m = await _replay_one_request(
                     client=slot_clients[slot_id],
@@ -1497,12 +1578,16 @@ async def _run_verbose_text(
                     extra_body=extra_body,
                     upstream_api=upstream_api,
                     response_chunks=response_chunks,
+                    thinking_chunks=thinking_chunks,
                 )
 
                 response_text = "".join(response_chunks)
+                thinking_text = "".join(thinking_chunks)
                 if use_live_history:
-                    if response_text:
-                        actual_history.append({"role": "assistant", "content": response_text})
+                    if response_text or thinking_text:
+                        actual_history.append(
+                            _build_assistant_message(response_text, thinking_text, upstream_api)
+                        )
                     else:
                         fallback = _get_recorded_assistant_message(entry, prev_entry)
                         if fallback:
@@ -1561,6 +1646,186 @@ async def _run_verbose_text(
         )
 
     return all_results
+
+
+# ---------------------------------------------------------------------------
+# Interleaved random: per-request dispatch across task executions
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _InterleavedTaskState:
+    """Per-task-execution state for interleaved dispatch."""
+    task: object  # Task
+    exec_idx: int
+    actual_history: list[dict]
+    per_turn_evals: list[list]
+    response_texts: list[str]
+    results: list[RequestMetrics]
+    ok_count: int = 0
+    total_decode_tps: float = 0.0
+    entries_done: int = 0
+
+
+async def _run_interleaved(
+    *,
+    con: Console,
+    execution_queue: list,
+    j: int,
+    url: str,
+    config: BenchmarkConfig,
+    headers: dict,
+    model_context_length: int | None,
+    extra_body: dict | None,
+    upstream_api: str = "openai",
+    history_mode: str = "live",
+    tracker: FailureTracker | None = None,
+    evaluate_llm: bool = False,
+    all_eval_results: list | None = None,
+    seed: int | None = None,
+) -> list:
+    """Run replay with interleaved_random: individual requests shuffled across tasks.
+
+    Each task execution maintains its own history and state. Individual
+    requests are dispatched through ``run_interleaved_work_queue`` which
+    enforces within-task serialization while randomly interleaving across
+    task executions.
+    """
+    from agentic_swarm_bench.scenarios.evaluator import (
+        aggregate_task_evals,
+        evaluate_response,
+    )
+
+    use_live_history = history_mode == "live"
+    if tracker is None:
+        tracker = FailureTracker()
+
+    total_entries = sum(t.total_requests for t, _ei in execution_queue)
+    task_word = "tasks" if len(execution_queue) != 1 else "task"
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=con,
+        transient=True,
+    ) as progress:
+        progress_task_id = progress.add_task(
+            f"Interleaved ({len(execution_queue)} {task_word}, {total_entries} reqs)",
+            total=total_entries,
+        )
+
+        states: list[_InterleavedTaskState] = []
+        for task, exec_idx in execution_queue:
+            states.append(_InterleavedTaskState(
+                task=task,
+                exec_idx=exec_idx,
+                actual_history=[],
+                per_turn_evals=[],
+                response_texts=[],
+                results=[],
+            ))
+
+        entry_counts = [len(t.entries) for t, _ei in execution_queue]
+        order = build_interleaved_order(entry_counts, seed=seed)
+
+        async with contextlib.AsyncExitStack() as stack:
+            slot_clients: list[httpx.AsyncClient] = [
+                await stack.enter_async_context(httpx.AsyncClient())
+                for _ in range(j)
+            ]
+
+            async def _process_one_request(
+                task_exec_idx: int,
+                entry_idx: int,
+                slot_id: int,
+            ) -> RequestMetrics | None:
+                if tracker.aborted:
+                    return None
+
+                st = states[task_exec_idx]
+                task = st.task
+                entry = task.entries[entry_idx]
+
+                if use_live_history:
+                    prev_entry = task.entries[entry_idx - 1] if entry_idx > 0 else None
+                    new_client_msgs = _extract_new_client_messages(entry, prev_entry)
+                    st.actual_history.extend(new_client_msgs)
+                    messages_to_send = list(st.actual_history)
+                    tokens = sum(_message_content_len(m) for m in messages_to_send) // 4
+                else:
+                    messages_to_send = entry.messages
+                    tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+
+                if model_context_length is not None and tokens > model_context_length:
+                    progress.advance(progress_task_id)
+                    return None
+
+                response_chunks: list[str] = []
+                thinking_chunks: list[str] = []
+                model = config.model or entry.model
+                m = await _replay_one_request(
+                    client=slot_clients[slot_id],
+                    url=url,
+                    model=model,
+                    headers=headers,
+                    messages=messages_to_send,
+                    max_tokens=entry.max_tokens,
+                    seq=entry.seq,
+                    timeout=config.timeout,
+                    user_id=slot_id,
+                    extra_body=extra_body,
+                    upstream_api=upstream_api,
+                    response_chunks=response_chunks,
+                    thinking_chunks=thinking_chunks,
+                )
+
+                response_text = "".join(response_chunks)
+                thinking_text = "".join(thinking_chunks)
+
+                if use_live_history:
+                    if response_text or thinking_text:
+                        st.actual_history.append(
+                            _build_assistant_message(response_text, thinking_text, upstream_api)
+                        )
+                    else:
+                        prev_entry = task.entries[entry_idx - 1] if entry_idx > 0 else None
+                        fallback = _get_recorded_assistant_message(entry, prev_entry)
+                        if fallback:
+                            st.actual_history.append(dict(fallback))
+
+                m.context_profile = _bucket_label(tokens)
+                m.context_tokens = tokens
+                st.results.append(m)
+                st.response_texts.append(response_text)
+                st.entries_done += 1
+
+                _track_request_result(
+                    m, task, response_text, entry.seq, tracker, slot_id, evaluate_response,
+                )
+                if task.evaluate:
+                    turn_evals = evaluate_response(task.evaluate, response_text, entry.seq)
+                    st.per_turn_evals.append(turn_evals)
+
+                if st.entries_done == len(task.entries):
+                    if task.evaluate and st.per_turn_evals and all_eval_results is not None:
+                        agg = aggregate_task_evals(st.per_turn_evals, task.evaluate)
+                        all_eval_results.append((task.name or task.id, agg))
+
+                progress.advance(progress_task_id)
+                return m
+
+            await run_interleaved_work_queue(
+                order,
+                _process_one_request,
+                max_concurrent=j,
+            )
+
+        progress.remove_task(progress_task_id)
+
+    return [st.results for st in states]
 
 
 def _print_bucket_stats(

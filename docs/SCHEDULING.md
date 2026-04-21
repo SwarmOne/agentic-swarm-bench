@@ -64,6 +64,43 @@ to reproduce a specific shuffle across runs; omit it for fresh entropy.
 agent's own prompt prefix (tool blocks, system prompt) get a free cache
 ride across tasks that run back-to-back.
 
+### `interleaved_random` (shuffle individual requests, not whole tasks)
+
+The three policies above shuffle **schedule-tasks** (whole task
+executions). `interleaved_random` shuffles individual **requests**
+across task executions while preserving within-task ordering:
+
+```
+Task A has 3 entries: A1 → A2 → A3
+Task B has 2 entries: B1 → B2
+Task C has 3 entries: C1 → C2 → C3
+
+interleaved_random might produce: A1, B1, C1, A2, C2, B2, A3, C3
+```
+
+This simulates multiple users whose sessions overlap in time:
+
+- User 1 starts a coding session → sends turn 1
+- User 2 starts → sends turn 1
+- User 1 idle 5 min → comes back → sends turn 2
+- User 3 starts → sends turn 1
+
+This exercises **L2 cache**: by the time a user returns, their KV may
+have been evicted from L1 (pushed out by other users' prefills) but
+should still be in L2. The gap between a user's turns makes L1 eviction
+more likely than with `sequential` or `round_robin`.
+
+Poisoning is unaffected: each task execution `(task.id, execution_index)`
+still has a fixed poison mask. The interleaving only changes the **order**
+requests are sent, not **which** bytes get poisoned.
+
+**Implementation**: `build_interleaved_order` maintains a cursor per
+task execution and repeatedly picks a random one to emit its next
+entry. The dispatcher uses asyncio Events to enforce within-task
+serialization: a request blocks until its predecessor in the same task
+execution completes. Since entries always appear in order in the
+pre-computed sequence, deadlocks are impossible.
+
 ## The dispatcher: pool of J workers
 
 With the list `L` built, dispatch is a literal work queue:

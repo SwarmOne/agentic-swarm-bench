@@ -244,3 +244,13 @@ def test_agent_default_policy_is_random():
     # before asserting. "[default: random]" can appear as "[default:\n  random]".
     flat = " ".join(result.output.split())
     assert "[default: random]" in flat
+
+
+def test_interleaved_random_policy_in_help():
+    """Both agent and replay must accept interleaved_random as a policy."""
+    for cmd in ("agent", "replay"):
+        result = RUNNER.invoke(main, [cmd, "--help"])
+        assert result.exit_code == 0
+        assert "interleaved_random" in result.output, (
+            f"interleaved_random missing from {cmd} --help"
+        )

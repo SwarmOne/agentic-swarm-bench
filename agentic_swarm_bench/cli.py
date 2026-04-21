@@ -436,12 +436,13 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
 )
 @click.option(
     "--policy",
-    type=click.Choice(["round_robin", "sequential", "random"]),
+    type=click.Choice(["round_robin", "sequential", "random", "interleaved_random"]),
     default="random",
     show_default=True,
     help="Schedule-task ordering. 'random' is the default because it prevents "
     "server-side prefix caches from getting a free ride by running the same "
-    "task repeatedly in a row.",
+    "task repeatedly in a row. 'interleaved_random' shuffles individual requests "
+    "across tasks (maintaining within-task order) to exercise L2 cache.",
 )
 @click.option(
     "--seed",
@@ -748,15 +749,17 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 )
 @click.option(
     "--policy",
-    type=click.Choice(["round_robin", "sequential", "random"]),
+    type=click.Choice(["round_robin", "sequential", "random", "interleaved_random"]),
     default="round_robin",
-    help="Task execution order: round_robin, sequential, or random (default: round_robin)",
+    help="Task execution order: round_robin, sequential, random, or interleaved_random. "
+    "interleaved_random shuffles individual requests across tasks while preserving "
+    "within-task order, exercising L2 cache by simulating multi-user session overlap.",
 )
 @click.option(
     "--seed",
     type=int,
     default=None,
-    help="Seed for --policy random. Omit for system entropy (non-reproducible); "
+    help="Seed for --policy random/interleaved_random. Omit for system entropy (non-reproducible); "
     "pass an integer to reproduce the same task order across runs.",
 )
 @click.option(
