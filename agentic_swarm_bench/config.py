@@ -153,12 +153,18 @@ def resolve_endpoint(endpoint: str) -> str:
     """Normalize the endpoint URL.
 
     If the URL already contains /chat/completions, use it as-is.
-    Otherwise, append /v1/chat/completions.
+    Otherwise, append /v1/chat/completions (or just /chat/completions
+    if the path already contains a version segment like /v1beta/).
     """
+    if not endpoint:
+        raise ValueError("endpoint must be a non-empty URL")
+
     endpoint = endpoint.rstrip("/")
     if endpoint.endswith("/chat/completions"):
         return endpoint
     if endpoint.endswith("/v1"):
+        return endpoint + "/chat/completions"
+    if "/v1beta/" in endpoint or "/v1/" in endpoint:
         return endpoint + "/chat/completions"
     return endpoint + "/v1/chat/completions"
 
@@ -194,6 +200,13 @@ def build_config(
 
     if config_file:
         yaml_data = load_yaml_config(config_file)
+        valid_keys = set(BenchmarkConfig.__dataclass_fields__)
+        unknown = set(yaml_data) - valid_keys
+        if unknown:
+            raise TypeError(
+                f"Unknown key(s) {', '.join(sorted(unknown))!r} in config file. "
+                f"Valid keys: {', '.join(sorted(valid_keys))}"
+            )
         cfg = cfg.merge(**yaml_data)
 
     env_cfg = BenchmarkConfig.from_env()

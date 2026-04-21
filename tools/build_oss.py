@@ -40,6 +40,7 @@ STRIP_FILES = [
     "tests/markers.py",
     "tools/build_oss.py",
     ".github/workflows/publish-oss.yml",
+    "BUGS-v4.0.0.md",
 ]
 
 IGNORE_PATTERNS = [

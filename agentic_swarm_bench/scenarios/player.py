@@ -956,7 +956,9 @@ async def replay_scenario(
     # poison output is stable regardless of queue order. Shuffling later is
     # purely about dispatch order, not about which bytes get sent.
 
-    if cache_mode == "realistic":
+    if config.dry_run:
+        execution_queue = raw_queue
+    elif cache_mode == "realistic":
         lcp_len = compute_scenario_lcp(sliced_tasks)
         if scenario.min_lcp_length is not None and lcp_len < scenario.min_lcp_length:
             raise ValueError(
@@ -1014,7 +1016,11 @@ async def replay_scenario(
 
     if config.dry_run:
         _print_replay_dry_run(scenario, url, schedule, con=con)
-        dry_run = BenchmarkRun(model=config.model, endpoint=config.endpoint)
+        dry_run = BenchmarkRun(
+            model=config.model,
+            endpoint=config.endpoint,
+            started_at=datetime.now(timezone.utc).isoformat(),
+        )
         if json_stdout:
             sys.stdout.write(json.dumps(dry_run.to_dict(), indent=2))
             sys.stdout.write("\n")

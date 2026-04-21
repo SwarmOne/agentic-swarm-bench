@@ -158,11 +158,17 @@ def _parse_entry(data: dict) -> RecordingEntry:
 def _load_jsonl(path: Path) -> list[RecordingEntry]:
     entries: list[RecordingEntry] = []
     with open(path) as f:
-        for line in f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
-            entries.append(_parse_entry(json.loads(line)))
+            try:
+                entries.append(_parse_entry(json.loads(line)))
+            except json.JSONDecodeError:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Skipping malformed JSON at %s line %d", path, line_num,
+                )
     return entries
 
 

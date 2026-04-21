@@ -307,18 +307,24 @@ OSS -->
 
 **Slicing scenarios:** Real sessions grow from small contexts to large ones. `--slice-tokens N` replays requests from the start until cumulative prompt tokens reach N.
 
+<!-- PRIVATE -->
 **Output modes:** `--verbose` (`-V`) shows a Rich live-updating table. `--verbose-text` (`--VV`) prints one plain-text line per event with no ANSI cursor movement - designed for AI agents or CI logs that consume terminal output line by line:
 
 ```bash
 asb replay -e URL -m MODEL --scenario trivial-qa --VV
 ```
+<!-- /PRIVATE -->
+<!-- OSS
+**Output modes:** `--verbose` (`-V`) shows a Rich live-updating table with per-task progress, phase, request counts, and decode tok/s.
+OSS -->
 
-**Early abort:** `--max-consecutive-failures N` stops the entire run if any worker slot hits N consecutive failures (HTTP errors, timeouts, or evaluation failures). Useful when pointing at an endpoint that may be down or producing garbage:
+**Early abort:** `--max-consecutive-failures N` stops the entire run if any worker slot hits N consecutive failures (HTTP errors, timeouts). Useful when pointing at an endpoint that may be down or producing garbage:
 
 ```bash
 asb replay -e URL -m MODEL --scenario js-coding-opus --max-consecutive-failures 5
 ```
 
+<!-- PRIVATE -->
 #### Answer Evaluation
 
 Scenario manifests can include `evaluate` directives on each task to check whether the model's response is correct:
@@ -361,6 +367,7 @@ When evaluation directives are present, `--history-mode recorded` is silently up
 The built-in `trivial-qa` scenario ships with evaluate directives so you can try this immediately.
 
 Requests are grouped by context size and produce the same metrics as `asb speed` - TTFT, tok/s, ITL, and aggregate throughput.
+<!-- /PRIVATE -->
 
 #### `asb list-scenarios` - Browse Built-in Scenarios
 

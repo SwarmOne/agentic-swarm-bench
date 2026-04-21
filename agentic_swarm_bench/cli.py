@@ -133,6 +133,14 @@ def _merge_extra_body(extra_body_json: str | None, enable_thinking: bool) -> dic
     return out or None
 
 
+def _build_config_safe(**kwargs):
+    """Wrap build_config and convert TypeError (unknown YAML keys) to UsageError."""
+    try:
+        return build_config(**kwargs)
+    except TypeError as e:
+        raise click.UsageError(str(e))
+
+
 def _require_endpoint_model(cfg_endpoint: str, cfg_model: str) -> None:
     """Raise a clear UsageError if endpoint or model are still unset after config resolution."""
     if not cfg_endpoint:
@@ -336,7 +344,7 @@ def speed(
 
     merged_extra = _merge_extra_body(extra_body, enable_thinking)
 
-    cfg = build_config(
+    cfg = _build_config_safe(
         config_file=ctx.obj.get("config_file"),
         cli_args={
             "endpoint": endpoint,
@@ -396,7 +404,7 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
     """
     from agentic_swarm_bench.runner.eval_runner import run_eval
 
-    cfg = build_config(
+    cfg = _build_config_safe(
         config_file=ctx.obj.get("config_file"),
         cli_args={
             "endpoint": endpoint,
@@ -512,7 +520,7 @@ def agent(
     from agentic_swarm_bench.runner.claude_code import run_agent_benchmark
     from agentic_swarm_bench.scenarios.schedule import Schedule
 
-    cfg = build_config(
+    cfg = _build_config_safe(
         config_file=ctx.obj.get("config_file"),
         cli_args={
             "endpoint": endpoint,
@@ -570,7 +578,11 @@ def list_tasks(tasks, tags, fmt):
     from agentic_swarm_bench.tasks.registry import get_tasks
 
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
-    matched = get_tasks(task_range=tasks, tags=tag_list)
+    try:
+        matched = get_tasks(task_range=tasks, tags=tag_list)
+    except ValueError:
+        valid = "trivial, easy, medium, hard, expert. Or use range: p1-p25"
+        raise click.UsageError(f"Invalid filter '{tasks}'. Valid tiers: {valid}.")
     if not matched:
         if tasks or tags:
             filter_parts = []
@@ -928,7 +940,7 @@ def replay(
 
     merged_extra = _merge_extra_body(extra_body, enable_thinking)
 
-    cfg = build_config(
+    cfg = _build_config_safe(
         config_file=ctx.obj.get("config_file"),
         cli_args={
             "endpoint": endpoint,
@@ -950,25 +962,30 @@ def replay(
     )
 
     _require_endpoint_model(cfg.endpoint, cfg.model)
-    asyncio.run(
-        _replay_scenario(
-            cfg,
-            scenario,
-            task_filter=task_filter,
-            slice_tokens=slice_tokens,
-            model_context_length=model_context_length,
-            schedule=sched,
-            cache_mode=cache_mode,
-            history_mode=history_mode,
-            extra_body=merged_extra,
-            json_stdout=json_stdout,
-            verbose=verbose,
-            verbose_text=verbose_text,
-            max_consecutive_failures=max_consecutive_failures,
-            evaluate_llm=evaluate_llm,
-            upstream_api=upstream_api,
+    try:
+        asyncio.run(
+            _replay_scenario(
+                cfg,
+                scenario,
+                task_filter=task_filter,
+                slice_tokens=slice_tokens,
+                model_context_length=model_context_length,
+                schedule=sched,
+                cache_mode=cache_mode,
+                history_mode=history_mode,
+                extra_body=merged_extra,
+                json_stdout=json_stdout,
+                verbose=verbose,
+                verbose_text=verbose_text,
+                max_consecutive_failures=max_consecutive_failures,
+                evaluate_llm=evaluate_llm,
+                upstream_api=upstream_api,
+            )
         )
-    )
+    except FileNotFoundError as e:
+        raise click.UsageError(str(e))
+    except ValueError as e:
+        raise click.UsageError(str(e))
 
 
 @main.command("list-scenarios")
@@ -1041,9 +1058,16 @@ def report(input, output, fmt):
       agentic-swarm-bench report -i results.json -o report.md
       agentic-swarm-bench report -i results.json -f json
     """
+    import json as _json_mod
+
     from agentic_swarm_bench.metrics.collector import BenchmarkRun
 
-    run = BenchmarkRun.load(input)
+    try:
+        run = BenchmarkRun.load(input)
+    except FileNotFoundError:
+        raise click.UsageError(f"File not found: {input}")
+    except _json_mod.JSONDecodeError:
+        raise click.UsageError(f"Invalid JSON in {input}")
 
     if fmt == "markdown":
         from agentic_swarm_bench.report.markdown import generate_report
@@ -1068,11 +1092,23 @@ def report(input, output, fmt):
 @click.option("--output", "-o", default=None, help="Output file")
 def compare(baseline, candidate, output):
     """Compare two benchmark runs side by side."""
+    import json as _json_mod
+
     from agentic_swarm_bench.metrics.collector import BenchmarkRun
     from agentic_swarm_bench.report.markdown import generate_comparison
 
-    run_a = BenchmarkRun.load(baseline)
-    run_b = BenchmarkRun.load(candidate)
+    try:
+        run_a = BenchmarkRun.load(baseline)
+    except FileNotFoundError:
+        raise click.UsageError(f"Baseline file not found: {baseline}")
+    except _json_mod.JSONDecodeError:
+        raise click.UsageError(f"Invalid JSON in baseline file: {baseline}")
+    try:
+        run_b = BenchmarkRun.load(candidate)
+    except FileNotFoundError:
+        raise click.UsageError(f"Candidate file not found: {candidate}")
+    except _json_mod.JSONDecodeError:
+        raise click.UsageError(f"Invalid JSON in candidate file: {candidate}")
     text = generate_comparison(run_a, run_b)
 
     if output:

@@ -284,8 +284,9 @@ def test_scenario_messages_with_no_content_key(tmp_path):
 def test_scenario_with_malformed_json_line(tmp_path):
     path = tmp_path / "bad.jsonl"
     path.write_text('{"seq": 1}\n{bad json}\n')
-    with pytest.raises(json.JSONDecodeError):
-        load_scenario(path)
+    s = load_scenario(path)
+    assert len(s.tasks) == 1
+    assert s.tasks[0].total_requests == 1
 
 
 def test_scenario_path_preserved(tmp_path):
