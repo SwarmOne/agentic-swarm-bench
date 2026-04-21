@@ -13,6 +13,22 @@ from agentic_swarm_bench.config import (
     SUITE_CONFIGS,
     build_config,
 )
+_HAS_SCHEDULER = False
+_HAS_EVALUATOR = False
+# --- PRIVATE ---
+from agentic_swarm_bench.modules import has_module
+
+_HAS_SCHEDULER = has_module("scheduler")
+try:
+    from agentic_swarm_bench.scenarios import evaluator as _eval_mod  # noqa: F401
+    _HAS_EVALUATOR = True
+except ImportError:
+    pass
+# --- /PRIVATE ---
+
+_POLICY_CHOICES = ["round_robin", "sequential"]
+if _HAS_SCHEDULER:
+    _POLICY_CHOICES += ["random", "interleaved_random"]
 
 
 class DefaultGroup(click.Group):
@@ -436,13 +452,17 @@ def eval(ctx, endpoint, model, api_key, api_key_header, tasks, validate, context
 )
 @click.option(
     "--policy",
-    type=click.Choice(["round_robin", "sequential", "random", "interleaved_random"]),
-    default="random",
+    type=click.Choice(_POLICY_CHOICES),
+    default="random" if _HAS_SCHEDULER else "round_robin",
     show_default=True,
-    help="Schedule-task ordering. 'random' is the default because it prevents "
-    "server-side prefix caches from getting a free ride by running the same "
-    "task repeatedly in a row. 'interleaved_random' shuffles individual requests "
-    "across tasks (maintaining within-task order) to exercise L2 cache.",
+    help="Schedule-task ordering. "
+    + ("'random' is the default because it prevents "
+       "server-side prefix caches from getting a free ride by running the same "
+       "task repeatedly in a row. 'interleaved_random' shuffles individual requests "
+       "across tasks (maintaining within-task order) to exercise L2 cache."
+       if _HAS_SCHEDULER else
+       "'round_robin' cycles through tasks; 'sequential' runs all repetitions "
+       "of one task before the next."),
 )
 @click.option(
     "--seed",
@@ -749,11 +769,14 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 )
 @click.option(
     "--policy",
-    type=click.Choice(["round_robin", "sequential", "random", "interleaved_random"]),
+    type=click.Choice(_POLICY_CHOICES),
     default="round_robin",
-    help="Task execution order: round_robin, sequential, random, or interleaved_random. "
-    "interleaved_random shuffles individual requests across tasks while preserving "
-    "within-task order, exercising L2 cache by simulating multi-user session overlap.",
+    help="Task execution order. "
+    + ("round_robin, sequential, random, or interleaved_random. "
+       "interleaved_random shuffles individual requests across tasks while preserving "
+       "within-task order, exercising L2 cache by simulating multi-user session overlap."
+       if _HAS_SCHEDULER else
+       "round_robin or sequential."),
 )
 @click.option(
     "--seed",
@@ -789,8 +812,10 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
 )
 @click.option(
     "--verbose-text", "--VV", is_flag=True,
+    hidden=not _HAS_EVALUATOR,
     help="Line-by-line text output (no ANSI cursor movement). "
-    "Designed for AI agents reading terminal output.",
+    "Designed for AI agents reading terminal output."
+    + ("" if _HAS_EVALUATOR else ""),
 )
 @click.option(
     "--max-consecutive-failures",
@@ -803,8 +828,10 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
     "--evaluate-llm",
     is_flag=True,
     default=False,
+    hidden=not _HAS_EVALUATOR,
     help="Run LLM-type evaluation directives (sends extra requests to the endpoint). "
-    "Without this flag, only contains/regex evaluations run.",
+    "Without this flag, only contains/regex evaluations run."
+    + ("" if _HAS_EVALUATOR else ""),
 )
 @click.pass_context
 def replay(

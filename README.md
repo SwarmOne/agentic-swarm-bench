@@ -51,7 +51,12 @@ When Claude Code opens a file, reads 2,000 lines, edits three functions, runs te
 | **Three benchmark modes**      | Record/replay (your real sessions), speed (synthetic load), agent (real multi-turn) - plus reporting and comparison                                                                                                    |
 | **Agentic swarm context**      | Pads requests with real-looking agentic sessions - system prompts with tool definitions, prior conversation turns, code files, tool call results, error traces                                                         |
 | **Growing context simulation** | Profiles simulate how context grows during a real coding session: fresh (6K) → short (20K) → medium (40K) → long (70K) → full (100K) → xl (200K) → xxl (400K)                                                          |
+<!-- PRIVATE -->
 | **Prefix cache poisoning**     | Space-doubling breaks prefix caching without adding artificial content, ensuring true cold-start measurements                                                                                                          |
+<!-- /PRIVATE -->
+<!-- OSS
+| **Prefix cache poisoning**     | Pre-processed recordings with varied punctuation and capitalization break prefix caching without adding artificial content, ensuring true cold-start measurements                                                       |
+OSS -->
 | **Cache impact measurement**   | `--cache-mode realistic` runs allcold + allwarm to show exact prefix cache speedup (10x cost difference on Anthropic)                                                                                                  |
 | **Reasoning token detection**  | Automatically detects thinking/reasoning tokens (DeepSeek R1, o3, Claude Extended Thinking) and reports thinking overhead vs visible output latency                                                                    |
 | **110 agentic swarm tasks**    | 5 difficulty tiers, 5 languages (Python, TypeScript, Rust, Go, SQL) - from single-function fixes to full-stack refactors                                                                                               |
@@ -289,7 +294,12 @@ asb replay -e URL -m MODEL --scenario session.jsonl --dry-run
 asb replay -e URL -m MODEL --scenario session.jsonl --slice-tokens 1000000
 ```
 
-**Scheduling:** Control how tasks execute with `--repetitions`, `--max-concurrent`, and `--policy` (round_robin, sequential, random).
+<!-- PRIVATE -->
+**Scheduling:** Control how tasks execute with `--repetitions`, `--max-concurrent`, and `--policy` (round_robin, sequential, random, interleaved_random).
+<!-- /PRIVATE -->
+<!-- OSS
+**Scheduling:** Control how tasks execute with `--repetitions`, `--max-concurrent`, and `--policy` (round_robin, sequential).
+OSS -->
 
 **Cache mode:** The default (`--cache-mode realistic`) preserves the shared prefix so it can be KV-cached, but poisons each user's unique context so it doesn't. Use `--cache-mode allwarm` for all-cached (optimistic) numbers or `--cache-mode allcold` to defeat caching entirely. See [Prefix Cache Poisoning](#prefix-cache-poisoning) for how this works.
 
@@ -553,12 +563,21 @@ This is useful when running suites or `realistic` sweeps against models with dif
 
 LLM inference engines cache the KV state of common prefixes so repeated requests skip prefill. This makes benchmarks look artificially fast - you're measuring cache hits, not real inference.
 
+<!-- PRIVATE -->
 AgenticSwarmBench defeats the prefix cache using **space doubling**: it finds isolated single spaces in the request context and randomly doubles some of them. This shifts BPE token boundaries (`" word"` → `"  word"` splits differently) and invalidates the KV cache from that point forward - without adding any artificial content the model can see.
 
 This mimics what actually happens in real coding sessions: when an agent edits a file mid-conversation, the context changes from the edit point onward, breaking the cache naturally.
 
 - **`asb speed`**: Each request gets a unique space-doubling pattern seeded by task ID, user ID, and timestamp
 - **`asb replay`**: Finds the longest common prefix across all tasks (typically the system prompt), preserves it so the server can cache it, then applies space-doubling only after that prefix. Different repetitions get different patterns.
+<!-- /PRIVATE -->
+<!-- OSS
+AgenticSwarmBench defeats the prefix cache using **pre-processed recordings** with varied punctuation and capitalization treatments. Each recording receives a unique transformation that shifts BPE token boundaries, invalidating the KV cache without altering the semantic content the model sees.
+
+This mimics what actually happens in real coding sessions: when an agent edits a file mid-conversation, the context changes from the edit point onward, breaking the cache naturally.
+
+- **`asb replay`**: Each recording has pre-applied cache-defeat treatments. Different repetitions use different recordings to ensure cache invalidation across runs.
+OSS -->
 
 ### Controlling cache behavior
 
@@ -566,7 +585,12 @@ Both `asb speed` and `asb replay` accept `--cache-mode` with three options:
 
 | Mode        | What it does                                                                                                                         |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+<!-- PRIVATE -->
 | `allcold`   | Every request defeats the KV cache via space-doubling. Measures true cold-start latency. Default for `asb speed`.                    |
+<!-- /PRIVATE -->
+<!-- OSS
+| `allcold`   | Every request defeats the KV cache. Measures true cold-start latency. Default for `asb speed`.                                       |
+OSS -->
 | `allwarm`   | No poisoning - requests arrive as-is and the server can cache freely. Measures best-case latency.                                    |
 | `realistic` | Preserves the shared prefix (system prompt) so it can be cached; poisons only the unique per-user portion. Default for `asb replay`. |
 
@@ -724,6 +748,7 @@ suite: standard
 
 ## Architecture
 
+<!-- PRIVATE -->
 ```
 agentic-swarm-bench/
   agentic_swarm_bench/
@@ -764,12 +789,59 @@ agentic-swarm-bench/
     report/
       markdown.py       ← Markdown report: verdict, insights, grades, ASCII charts
 
+  modules/                ← Private extension modules (not in OSS)
+    asb_cache_defeat/     ← Live space-doubling cache poisoning
+    asb_scheduler/        ← random + interleaved_random scheduling policies
+
   skill/
     SKILL.md            ← Claude Code skill: auto-optimize LLM deployments using asb
 ```
+<!-- /PRIVATE -->
+<!-- OSS
+```
+agentic-swarm-bench/
+  agentic_swarm_bench/
+    cli.py              ← Click CLI (asb record | replay | speed | agent | eval | ...)
+    config.py           ← Config: CLI > env > YAML > defaults
+
+    scenarios/
+      recorder.py       ← Recording proxy: captures real sessions as JSONL recordings
+      player.py         ← Replay engine: replays scenarios against any endpoint
+      registry.py       ← Load/list/resolve scenarios (file path or built-in name)
+      schedule.py       ← Execution schedule: repetitions, concurrency, ordering policy
+      poison.py         ← Prefix-cache poisoning hooks (uses pre-processed recordings)
+      data/
+        trivial-qa/     ← Non-agentic baseline (5 single-turn Q&A tasks, with evaluations)
+        js-coding-opus/ ← Agentic JS coding sessions (5 multi-turn tasks)
+
+    tasks/
+      tasks.json        ← 110 agentic swarm tasks, P1-P110
+      registry.py       ← Load/filter tasks by tier, range, tags, language
+      context/
+        codebase_context.py ← Agentic session context: tool schemas, file contents, conversation turns
+
+    runner/
+      direct.py         ← Speed mode: direct endpoint benchmark with agentic context
+      eval_runner.py    ← Eval mode: code correctness validation
+      claude_code.py    ← Agent mode: Claude Code orchestration through recording proxy
+
+    proxy/
+      server.py         ← Agent-mode proxy (FastAPI) - Anthropic ↔ OpenAI translation
+      padding.py        ← Context padding for proxy mode
+      translators.py    ← API format translation
+
+    metrics/
+      collector.py      ← Per-request metrics: TTFT, tok/s, ITL, thinking tokens
+      stats.py          ← Statistical analysis (p50, p95, p99, distributions)
+
+    report/
+      markdown.py       ← Markdown report: verdict, insights, grades, ASCII charts
+```
+OSS -->
 
 ---
 
+<!-- PRIVATE -->
 ## Claude Code Optimization Skill
 
 The repo includes a Claude Code skill (`skill/SKILL.md`) that turns Claude Code into an automated deployment optimizer. Point it at your serving stack and it will:
@@ -788,6 +860,7 @@ The repo includes a Claude Code skill (`skill/SKILL.md`) that turns Claude Code 
 See `skill/SKILL.md` for the full skill definition and available knobs.
 
 ---
+<!-- /PRIVATE -->
 
 ## Contributing
 

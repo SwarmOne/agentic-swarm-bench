@@ -1,0 +1,54 @@
+name: Publish OSS
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install hatchling pytest pytest-asyncio httpx click rich pyyaml
+
+      - name: Build OSS staging
+        run: python tools/build_oss.py --output-dir ./oss-staging
+
+      - name: Install stripped package
+        run: pip install -e "./oss-staging[dev]"
+
+      - name: Run public test suite
+        run: python -m pytest oss-staging/tests/ -x -q
+
+      - name: Push to public repo
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          OSS_DEPLOY_KEY: ${{ secrets.OSS_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$OSS_DEPLOY_KEY" > ~/.ssh/oss_deploy
+          chmod 600 ~/.ssh/oss_deploy
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/oss_deploy -o StrictHostKeyChecking=no"
+
+          cd oss-staging
+          git init
+          git add -A
+          git commit -m "OSS release from $(git -C .. rev-parse --short HEAD)"
+          git remote add public git@github.com:SwarmOne/agentic-swarm-bench.git
+          git push -f public HEAD:main
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            git tag "$TAG"
+            git push public "$TAG"
+          fi

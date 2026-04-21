@@ -26,7 +26,7 @@ try:
 except ImportError:
     HAS_FASTAPI = False
 
-from agentic_swarm_bench.proxy.padding import pad_messages_to_target
+from agentic_swarm_bench.proxy.context import pad_messages_to_target
 from agentic_swarm_bench.proxy.translators import (
     anthropic_to_openai,
     make_anthropic_stream_events,

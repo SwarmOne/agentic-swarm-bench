@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "asb-scheduler"
+version = "0.1.0"
+description = "Random and interleaved scheduling for AgenticSwarmBench (private)"
+requires-python = ">=3.10"
+dependencies = ["agentic-swarm-bench>=3.4.3"]
+
+[project.entry-points."asb.modules"]
+scheduler = "asb_scheduler:SchedulerModule"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/asb_scheduler"]

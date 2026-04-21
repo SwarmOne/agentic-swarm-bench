@@ -6,6 +6,8 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agentic_swarm_bench.metrics.collector import RequestMetrics
 from agentic_swarm_bench.scenarios.player import (
     _bucket_label,
@@ -14,11 +16,6 @@ from agentic_swarm_bench.scenarios.player import (
     _replay_one_request,
     _slice_entries,
     _strip_cache_control,
-)
-from agentic_swarm_bench.scenarios.poison import (
-    _serialize_messages,
-    compute_scenario_lcp,
-    poison_task_execution,
 )
 from agentic_swarm_bench.scenarios.registry import RecordingEntry, Task
 
@@ -579,72 +576,6 @@ def test_malformed_json_in_sse_is_skipped():
     m = _replay(client=FakeClient(FakeStreamResponse(lines)))
     assert m.error is None
     assert m.completion_tokens > 0
-
-
-# ---------------------------------------------------------------------------
-# Poison diversity across repetitions
-#
-# These tests exist because `--users N` used to produce N identical poisoned
-# payloads per task (cache free-ride bug). The replacement is `--repetitions N
-# --max-concurrent N`, which works only if different execution_index values
-# produce genuinely different poisoned bytes. Guard that invariant here.
-# ---------------------------------------------------------------------------
-
-
-def _make_poisonable_entry(content: str) -> RecordingEntry:
-    return RecordingEntry(seq=0, messages=[{"role": "user", "content": content}])
-
-
-def _make_poisonable_tasks() -> list[Task]:
-    """Two tasks sharing a prefix (so compute_scenario_lcp returns a finite LCP)."""
-    shared = "SYSTEM PROMPT " * 50
-    body_a = " ".join(f"alpha{i}" for i in range(400))
-    body_b = " ".join(f"beta{i}" for i in range(400))
-    return [
-        Task(id="t1", name="t1", entries=[_make_poisonable_entry(shared + body_a)]),
-        Task(id="t2", name="t2", entries=[_make_poisonable_entry(shared + body_b)]),
-    ]
-
-
-def test_repetitions_produce_distinct_poisoned_payloads():
-    """Two repetitions of the same task must yield different serialized bytes.
-
-    This is the invariant that makes `--repetitions N --max-concurrent N`
-    a correct replacement for the removed `--users N` flag.
-    """
-    tasks = _make_poisonable_tasks()
-    lcp_len = compute_scenario_lcp(tasks)
-    task = tasks[0]
-
-    poisoned_a = poison_task_execution(task, lcp_len, execution_index=0)
-    poisoned_b = poison_task_execution(task, lcp_len, execution_index=1)
-
-    text_a = _serialize_messages(poisoned_a.entries[0].messages)
-    text_b = _serialize_messages(poisoned_b.entries[0].messages)
-
-    assert text_a != text_b, (
-        "Two repetitions must produce different poisoned payloads; "
-        "if they match, --repetitions loses its cache-busting property."
-    )
-
-
-def test_repetitions_preserve_shared_lcp():
-    """The shared LCP (system prompt) must stay byte-identical across reps.
-
-    Realistic mode's whole point is: shared prefix cached, per-execution tail
-    varied. If the LCP diverges, every request becomes a full cold prefill.
-    """
-    tasks = _make_poisonable_tasks()
-    lcp_len = compute_scenario_lcp(tasks)
-    task = tasks[0]
-
-    poisoned_a = poison_task_execution(task, lcp_len, execution_index=0)
-    poisoned_b = poison_task_execution(task, lcp_len, execution_index=1)
-
-    text_a = _serialize_messages(poisoned_a.entries[0].messages)
-    text_b = _serialize_messages(poisoned_b.entries[0].messages)
-
-    assert text_a[:lcp_len] == text_b[:lcp_len]
 
 
 # ---------------------------------------------------------------------------

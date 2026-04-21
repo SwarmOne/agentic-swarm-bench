@@ -537,13 +537,6 @@ def test_report_missing_timestamp():
 # --- Report methodology section ---
 
 
-def test_report_includes_cache_poisoning_methodology():
-    run = _make_run()
-    report = generate_report(run)
-    assert "space-doubling" in report
-    assert "prefix caching" in report
-
-
 # --- Experience label tests ---
 
 

@@ -64,13 +64,38 @@ from agentic_swarm_bench.scenarios.registry import (
 from agentic_swarm_bench.scenarios.schedule import (
     Schedule,
     build_execution_queue,
-    build_interleaved_order,
-    run_interleaved_work_queue,
     run_work_queue,
 )
 
+
 console = Console()
 _plain_console = Console(highlight=False, markup=False)
+
+
+def _load_evaluator():
+    """Lazily load the evaluator module. Returns (evaluate_response, aggregate_task_evals, EvalResult) or no-op stubs."""
+    try:
+        from agentic_swarm_bench.scenarios.evaluator import (
+            EvalResult,
+            aggregate_task_evals,
+            evaluate_response,
+        )
+        return evaluate_response, aggregate_task_evals, EvalResult
+    except ImportError:
+        class _NoOpEvalResult:
+            directive_type: str = ""
+            passed: bool = False
+            detail: str = ""
+            matched_seq: int | None = None
+            directive_index: int | None = None
+
+        def _noop_evaluate(*args, **kwargs):
+            return []
+
+        def _noop_aggregate(*args, **kwargs):
+            return []
+
+        return _noop_evaluate, _noop_aggregate, _NoOpEvalResult
 
 
 class FailureTracker:
@@ -1006,7 +1031,7 @@ async def replay_scenario(
     # which matters for prefix-cache measurements.
     j = max(1, min(schedule.max_concurrent, len(execution_queue)))
 
-    from agentic_swarm_bench.scenarios.evaluator import EvalResult
+    _evaluate_response, _aggregate_task_evals, EvalResult = _load_evaluator()
 
     all_eval_results: list[tuple[str, list[EvalResult]]] = []
 
@@ -1028,20 +1053,24 @@ async def replay_scenario(
         all_eval_results=all_eval_results,
     )
 
+    all_results: list | None = None
+    # --- PRIVATE ---
     if schedule.policy == "interleaved_random":
         effective_seed = schedule.seed
         all_results = await _run_interleaved(
             **run_kwargs,
             seed=effective_seed,
         )
-    elif verbose_text:
+    # --- /PRIVATE ---
+
+    if all_results is None and verbose_text:
         all_results = await _run_verbose_text(**run_kwargs)
-    elif verbose:
+    elif all_results is None and verbose:
         all_results = await _run_verbose(
             **run_kwargs,
             recording_states=recording_states,
         )
-    else:
+    elif all_results is None:
         all_results = await _run_progress_bar(
             **run_kwargs,
             total_task_executions=total_task_executions,
@@ -1171,10 +1200,7 @@ async def _run_verbose(
     all_eval_results: list | None = None,
 ) -> list:
     """Run the replay with live-updating per-recording verbose display."""
-    from agentic_swarm_bench.scenarios.evaluator import (
-        aggregate_task_evals,
-        evaluate_response,
-    )
+    evaluate_response, aggregate_task_evals, _ = _load_evaluator()
 
     use_live_history = history_mode == "live"
     if tracker is None:
@@ -1320,10 +1346,7 @@ async def _run_progress_bar(
     all_eval_results: list | None = None,
 ) -> list:
     """Run the replay with a simple aggregate progress bar (non-verbose)."""
-    from agentic_swarm_bench.scenarios.evaluator import (
-        aggregate_task_evals,
-        evaluate_response,
-    )
+    evaluate_response, aggregate_task_evals, _ = _load_evaluator()
 
     use_live_history = history_mode == "live"
     if tracker is None:
@@ -1500,10 +1523,7 @@ async def _run_verbose_text(
 
     Designed for AI agents that read terminal output line by line.
     """
-    from agentic_swarm_bench.scenarios.evaluator import (
-        aggregate_task_evals,
-        evaluate_response,
-    )
+    evaluate_response, aggregate_task_evals, _ = _load_evaluator()
 
     use_live_history = history_mode == "live"
     if tracker is None:
@@ -1667,6 +1687,7 @@ class _InterleavedTaskState:
     entries_done: int = 0
 
 
+# --- PRIVATE ---
 async def _run_interleaved(
     *,
     con: Console,
@@ -1691,10 +1712,9 @@ async def _run_interleaved(
     enforces within-task serialization while randomly interleaving across
     task executions.
     """
-    from agentic_swarm_bench.scenarios.evaluator import (
-        aggregate_task_evals,
-        evaluate_response,
-    )
+    from asb_scheduler.interleaved import build_interleaved_order, run_interleaved_work_queue
+
+    evaluate_response, aggregate_task_evals, _ = _load_evaluator()
 
     use_live_history = history_mode == "live"
     if tracker is None:
@@ -1826,6 +1846,7 @@ async def _run_interleaved(
         progress.remove_task(progress_task_id)
 
     return [st.results for st in states]
+# --- /PRIVATE ---
 
 
 def _print_bucket_stats(

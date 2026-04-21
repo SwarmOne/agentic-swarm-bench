@@ -291,9 +291,13 @@ def create_recording_app(
 
         async def _stream():
             ttft = None
+            ttft_thinking = None
+            ttft_visible = None
             token_count = 0
             first_time = None
             last_time = None
+            thinking_chunks: list[str] = []
+            response_chunks: list[str] = []
 
             async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
                 async with client.stream(
@@ -321,15 +325,28 @@ def create_recording_app(
                             if event_type == "content_block_delta":
                                 delta = data_obj.get("delta", {})
                                 delta_type = delta.get("type", "")
-                                has_content = (
-                                    (delta_type == "text_delta" and delta.get("text"))
-                                    or (
-                                        delta_type == "input_json_delta"
-                                        and delta.get("partial_json")
-                                    )
-                                    or (delta_type == "thinking_delta" and delta.get("thinking"))
-                                )
-                                if has_content:
+
+                                if delta_type == "thinking_delta" and delta.get("thinking"):
+                                    thinking_chunks.append(delta["thinking"])
+                                    if first_time is None:
+                                        first_time = now
+                                        ttft = (now - t_start) * 1000
+                                    if ttft_thinking is None:
+                                        ttft_thinking = (now - t_start) * 1000
+                                    last_time = now
+                                    token_count += 1
+
+                                elif delta_type == "text_delta" and delta.get("text"):
+                                    response_chunks.append(delta["text"])
+                                    if first_time is None:
+                                        first_time = now
+                                        ttft = (now - t_start) * 1000
+                                    if ttft_visible is None:
+                                        ttft_visible = (now - t_start) * 1000
+                                    last_time = now
+                                    token_count += 1
+
+                                elif delta_type == "input_json_delta" and delta.get("partial_json"):
                                     if first_time is None:
                                         first_time = now
                                         ttft = (now - t_start) * 1000
@@ -355,6 +372,15 @@ def create_recording_app(
             entry["total_time_s"] = round(t_end - t_start, 3)
             entry["completion_tokens"] = token_count
 
+            if ttft_thinking is not None:
+                entry["ttft_thinking_ms"] = round(ttft_thinking, 2)
+            if ttft_visible is not None:
+                entry["ttft_visible_ms"] = round(ttft_visible, 2)
+            if thinking_chunks:
+                entry["thinking_content"] = "".join(thinking_chunks)
+            if response_chunks:
+                entry["response_text"] = "".join(response_chunks)
+
             if first_time and last_time and token_count > 1:
                 decode_time = last_time - first_time
                 entry["decode_time_s"] = round(decode_time, 3)
@@ -369,6 +395,8 @@ def create_recording_app(
 
         async def _stream():
             ttft = None
+            ttft_thinking = None
+            ttft_visible = None
             token_count = 0
             first_time = None
             last_time = None
@@ -376,6 +404,8 @@ def create_recording_app(
             upstream_error: str | None = None
             tool_acc = None
             stop_reason = "end_turn"
+            thinking_chunks: list[str] = []
+            response_chunks: list[str] = []
 
             if is_messages_api:
                 from agentic_swarm_bench.proxy.translators import (
@@ -434,14 +464,30 @@ def create_recording_app(
                             if finish == "tool_calls":
                                 stop_reason = "tool_use"
 
+                        # Handle reasoning_content deltas (thinking)
+                        for choice in chunk.get("choices", []):
+                            reasoning = choice.get("delta", {}).get("reasoning_content")
+                            if reasoning:
+                                thinking_chunks.append(reasoning)
+                                if first_time is None:
+                                    first_time = now
+                                    ttft = (now - t_start) * 1000
+                                if ttft_thinking is None:
+                                    ttft_thinking = (now - t_start) * 1000
+                                last_time = now
+                                token_count += 1
+
                         # Handle text content deltas
                         for choice in chunk.get("choices", []):
                             content = choice.get("delta", {}).get("content")
                             if not content:
                                 continue
+                            response_chunks.append(content)
                             if first_time is None:
                                 first_time = now
                                 ttft = (now - t_start) * 1000
+                            if ttft_visible is None:
+                                ttft_visible = (now - t_start) * 1000
                             last_time = now
                             token_count += 1
 
@@ -495,6 +541,15 @@ def create_recording_app(
             entry["completion_tokens"] = token_count
             if upstream_status is not None:
                 entry["status_code"] = upstream_status
+
+            if ttft_thinking is not None:
+                entry["ttft_thinking_ms"] = round(ttft_thinking, 2)
+            if ttft_visible is not None:
+                entry["ttft_visible_ms"] = round(ttft_visible, 2)
+            if thinking_chunks:
+                entry["thinking_content"] = "".join(thinking_chunks)
+            if response_chunks:
+                entry["response_text"] = "".join(response_chunks)
 
             if first_time and last_time and token_count > 1:
                 decode_time = last_time - first_time

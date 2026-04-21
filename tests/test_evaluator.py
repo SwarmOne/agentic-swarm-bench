@@ -5,6 +5,12 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from tests.markers import requires_evaluator
+
+pytestmark = requires_evaluator
+
 from agentic_swarm_bench.scenarios.evaluator import (
     EvalResult,
     aggregate_task_evals,

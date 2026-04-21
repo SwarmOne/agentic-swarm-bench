@@ -500,19 +500,41 @@ def _methodology_section(run: BenchmarkRun) -> str:
         ),
     ]
 
-    lines.extend(
-        [
-            "### Prefix cache poisoning\n",
-            (
-                "Cold-start measurements use space-doubling to defeat "
-                "prefix caching: isolated spaces in the context are "
-                "randomly doubled, shifting BPE token boundaries and "
-                "invalidating the KV cache without adding artificial "
-                "content. This ensures measurements reflect true "
-                "inference performance, not cache hits.\n"
-            ),
-        ]
-    )
+    _cache_section_done = False
+    # --- PRIVATE ---
+    from agentic_swarm_bench.modules import has_module
+
+    if has_module("cache_defeat"):
+        lines.extend(
+            [
+                "### Prefix cache poisoning\n",
+                (
+                    "Cold-start measurements use space-doubling to defeat "
+                    "prefix caching: isolated spaces in the context are "
+                    "randomly doubled, shifting BPE token boundaries and "
+                    "invalidating the KV cache without adding artificial "
+                    "content. This ensures measurements reflect true "
+                    "inference performance, not cache hits.\n"
+                ),
+            ]
+        )
+        _cache_section_done = True
+    # --- /PRIVATE ---
+
+    if not _cache_section_done:
+        lines.extend(
+            [
+                "### Cache defeat via pre-processed recordings\n",
+                (
+                    "Cold-start measurements use pre-processed recordings "
+                    "with punctuation and capitalization variations that "
+                    "shift BPE token boundaries, invalidating the KV "
+                    "prefix cache without altering semantic content. "
+                    "Each recording receives a unique treatment to ensure "
+                    "cache invalidation across repetitions.\n"
+                ),
+            ]
+        )
 
     lines.extend(
         [

@@ -367,6 +367,7 @@ async def test_run_scenario_repetitions_multiplies_requests(monkeypatch):
         context_profile="fresh",
         tasks=tasks,
         repetitions=4,
+        defeat_cache=False,
     )
 
     assert len(scenario.requests) == 12  # 3 users × 4 reps
@@ -518,6 +519,7 @@ async def test_cli_max_tokens_caps_per_task_default(monkeypatch):
         context_tokens=6000,
         context_profile="fresh",
         tasks=tasks,
+        defeat_cache=False,
     )
     assert seen_max_tokens == [32]
 
@@ -718,6 +720,7 @@ async def test_run_scenario_cancel_midflight_preserves_completed_requests():
                 tasks=[{"id": "P1", "prompt": "hi"}],
                 repetitions=1,
                 request_counter=itertools.count(0),
+                defeat_cache=False,
             )
         )
         await asyncio.sleep(0.2)  # user 0 finishes, users 1-3 still in flight
@@ -896,6 +899,7 @@ async def test_request_id_is_monotonic_across_scenarios(monkeypatch):
             context_profile="fresh",
             tasks=tasks,
             request_counter=counter,
+            defeat_cache=False,
         )
 
     assert all_ids == list(range(6))

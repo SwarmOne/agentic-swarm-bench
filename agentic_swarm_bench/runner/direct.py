@@ -30,7 +30,7 @@ from agentic_swarm_bench.metrics.collector import (
     is_context_length_error,
 )
 from agentic_swarm_bench.metrics.stats import ScenarioStats, analyze_scenario
-from agentic_swarm_bench.proxy.padding import poison_messages
+
 from agentic_swarm_bench.tasks.context.codebase_context import build_messages
 from agentic_swarm_bench.tasks.registry import get_tasks
 
@@ -344,10 +344,14 @@ async def run_scenario(
                             None if not config.random_context else (i + rep + time.time_ns())
                         ),
                     )
+                    # --- PRIVATE ---
                     if defeat_cache:
+                        from asb_cache_defeat.padding_poison import poison_messages
+
                         msgs = poison_messages(
                             msgs, seed=f"speed-{tid}-u{i}-r{rep}-{time.time_ns()}"
                         )
+                    # --- /PRIVATE ---
                     coros_args.append((msgs, max_tok, tid))
 
                 in_flight = [
@@ -833,7 +837,7 @@ def _get_cache_passes(cache_mode: str) -> list[tuple[str, bool]]:
     """Return (label, defeat_cache) pairs for the selected cache mode.
 
     realistic = run both allcold + allwarm passes to measure the full picture.
-    allcold   = every request defeats the KV cache (space-doubling poison).
+    allcold   = every request defeats the KV cache (cache poisoning).
     allwarm   = every request can benefit from cache (no poisoning).
 
     Old names (cold/warm/both) are accepted for backward compatibility with
