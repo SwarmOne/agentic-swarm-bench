@@ -35,17 +35,33 @@ jobs:
         env:
           OSS_PAT: ${{ secrets.OSS_PAT }}
         run: |
-          cd oss-staging
-          git init -b main
+          PUBLIC_URL="https://x-access-token:${OSS_PAT}@github.com/SwarmOne/agentic-swarm-bench.git"
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          COMMIT_MSG="$(git log -1 --format='%s')"
+
+          # Clone existing public repo to preserve history
+          git clone "$PUBLIC_URL" public-repo
+          cd public-repo
           git config user.name "SwarmOne Bot"
           git config user.email "bot@swarmone.ai"
-          git add -A
-          git commit -m "OSS release from $(git -C .. rev-parse --short HEAD)"
-          git remote add public https://x-access-token:${OSS_PAT}@github.com/SwarmOne/agentic-swarm-bench.git
-          git push -f public main
 
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-            git tag "$TAG"
-            git push public "$TAG"
+          # Replace all tracked files with the new OSS build
+          git rm -rf . > /dev/null 2>&1 || true
+          rm -rf ../oss-staging/.git
+          cp -a ../oss-staging/. .
+
+          git add -A
+
+          # Only commit and push if there are actual changes
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+          else
+            git commit -m "oss: ${COMMIT_MSG} (${SHORT_SHA})"
+            git push origin main
+
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              TAG="${GITHUB_REF#refs/tags/}"
+              git tag "$TAG"
+              git push origin "$TAG"
+            fi
           fi
