@@ -201,3 +201,54 @@ def test_agent_schedule_flags_in_help():
         assert flag in result.output, f"missing {flag} in agent --help"
 
 
+# ---------------------------------------------------------------------------
+# Task range fallback warnings and dry-run label accuracy
+# ---------------------------------------------------------------------------
+
+
+def test_speed_empty_task_range_warns():
+    """When --tasks matches nothing, a warning should be printed before fallback."""
+    result = RUNNER.invoke(
+        main,
+        ["speed", "-e", "http://x", "-m", "m", "--tasks", "p999",
+         "--dry-run", "-p", "fresh", "-u", "1"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Warning" in result.output
+    assert "P1-P25" in result.output or "p1-p25" in result.output
+
+
+def test_speed_suite_with_profile_warns():
+    result = RUNNER.invoke(
+        main,
+        ["speed", "-e", "http://x", "-m", "m", "--suite", "quick",
+         "--context-profile", "medium", "--dry-run"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Warning" in result.output
+    assert "medium" in result.output
+
+
+def test_speed_dry_run_sample_uses_actual_task_id():
+    """Sample request label should use the actual first task, not hardcoded P1."""
+    result = RUNNER.invoke(
+        main,
+        ["speed", "-e", "http://x", "-m", "m", "--tasks", "p50-p60",
+         "--dry-run", "-p", "fresh", "-u", "1"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "P50 at" in result.output
+    assert "P1 at 6K" not in result.output
+
+
+def test_speed_dry_run_sample_uses_actual_context():
+    """Sample request label should use the actual scenario context size."""
+    result = RUNNER.invoke(
+        main,
+        ["speed", "-e", "http://x", "-m", "m", "--tasks", "p1-p3",
+         "--dry-run", "-p", "long", "-u", "1"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "P1 at 70K" in result.output
+
+

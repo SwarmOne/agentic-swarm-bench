@@ -872,3 +872,59 @@ def test_list_builtin_discovers_extra_json_files(tmp_path, monkeypatch):
     names = {s["name"] for s in scenarios}
     assert "full" in names
     assert "small" in names
+
+
+# ---------------------------------------------------------------------------
+# Null-safety: "messages": null and "content": null in JSONL
+# ---------------------------------------------------------------------------
+
+
+def test_parse_entry_messages_null_becomes_empty_list():
+    """When a JSONL line has "messages": null, the entry should get [] not None."""
+    from agentic_swarm_bench.scenarios.registry import _parse_entry
+
+    entry = _parse_entry({"seq": 1, "messages": None})
+    assert entry.messages == []
+    assert isinstance(entry.messages, list)
+
+
+def test_parse_entry_messages_absent_becomes_empty_list():
+    from agentic_swarm_bench.scenarios.registry import _parse_entry
+
+    entry = _parse_entry({"seq": 1})
+    assert entry.messages == []
+
+
+def test_total_tokens_approx_with_null_messages():
+    """Task.total_tokens_approx must not crash when an entry has messages=[]."""
+    entry = RecordingEntry(seq=1, messages=[])
+    task = Task(id="t", entries=[entry])
+    assert task.total_tokens_approx == 0
+
+
+def test_load_jsonl_null_messages(tmp_path):
+    """A JSONL file with null messages loads without error."""
+    from agentic_swarm_bench.scenarios.registry import _load_jsonl
+
+    jsonl = tmp_path / "test.jsonl"
+    jsonl.write_text('{"seq": 1, "messages": null}\n')
+    entries = _load_jsonl(jsonl)
+    assert len(entries) == 1
+    assert entries[0].messages == []
+
+
+def test_content_null_in_message_does_not_crash():
+    """len(m.get("content") or "") handles null content without TypeError."""
+    msgs = [{"role": "user", "content": None}]
+    tok = sum(len(m.get("content") or "") for m in msgs) // 4
+    assert tok == 0
+
+
+def test_total_tokens_approx_with_content_null():
+    """Task.total_tokens_approx handles content: null gracefully."""
+    entry = RecordingEntry(
+        seq=1,
+        messages=[{"role": "user", "content": None}],
+    )
+    task = Task(id="t", entries=[entry])
+    assert task.total_tokens_approx == 0

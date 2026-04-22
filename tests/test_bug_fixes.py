@@ -978,3 +978,4 @@ def test_fmt_ms_zero_renders_as_dash():
 def test_fmt_ms_integer_milliseconds_still_rounded():
     assert _fmt_ms(42) == "42ms"
     assert _fmt_ms(999.4) == "999ms"
+

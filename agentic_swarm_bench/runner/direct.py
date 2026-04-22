@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -582,10 +583,21 @@ async def run_speed_benchmark(config: BenchmarkConfig) -> BenchmarkRun:
     """Run the full speed benchmark across all configured scenarios."""
     tasks = get_tasks(task_range=config.task_range, tier=config.tier, tags=config.tags)
     if not tasks:
+        if config.task_range or config.tier or config.tags:
+            console.print(
+                f"  [{WARN_COLOR}]Warning: No tasks matched the filter"
+                f" (--tasks={config.task_range or '-'},"
+                f" --tier={config.tier or '-'},"
+                f" --tags={', '.join(config.tags) if config.tags else '-'})."
+                f" Falling back to P1-P25.[/{WARN_COLOR}]"
+            )
         tasks = get_tasks(task_range="p1-p25")
 
     url = resolve_endpoint(config.endpoint)
     headers = _build_headers(config)
+
+    for warning in config.profile_conflict_warnings():
+        console.print(f"  [{WARN_COLOR}]Warning: {warning}[/{WARN_COLOR}]")
 
     run = BenchmarkRun(
         model=config.model,
@@ -800,11 +812,15 @@ def _print_dry_run(
         user_word = "user" if users == 1 else "users"
         console.print(f"    {profile} · {tokens // 1000}K · {users} {user_word}")
 
-    sample_msgs = build_messages(tasks[0]["prompt"], 6000)
-    total_chars = sum(len(m["content"]) for m in sample_msgs)
+    sample_task = tasks[0]
+    sample_tokens = scenarios[0][2] if scenarios else 6000
+    sample_msgs = build_messages(sample_task["prompt"], sample_tokens)
+    total_chars = sum(len(m.get("content") or "") for m in sample_msgs)
     n_msgs = len(sample_msgs)
+    ctx_label = f"{math.ceil(sample_tokens / 1000)}K"
     console.print(
-        f"\n  [{DIM}]Sample request (P1 at 6K): ~{total_chars:,} chars, {n_msgs} msgs[/{DIM}]"
+        f"\n  [{DIM}]Sample request ({sample_task['id']} at {ctx_label}):"
+        f" ~{total_chars:,} chars, {n_msgs} msgs[/{DIM}]"
     )
 
 

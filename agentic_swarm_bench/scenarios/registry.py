@@ -142,7 +142,7 @@ def _parse_entry(data: dict) -> RecordingEntry:
         seq=data.get("seq", 0),
         experiment_id=data.get("experiment_id", ""),
         timestamp=data.get("timestamp", ""),
-        messages=data.get("messages", []),
+        messages=data.get("messages") or [],
         model=data.get("model", ""),
         max_tokens=data.get("max_tokens", 4096),
         temperature=data.get("temperature", 1.0),

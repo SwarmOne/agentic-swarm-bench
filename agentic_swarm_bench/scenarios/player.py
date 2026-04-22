@@ -229,7 +229,7 @@ async def _replay_one_request(
         request_id=seq,
         user_id=user_id,
         task_id=f"replay-{seq}",
-        context_tokens=sum(len(m.get("content", "")) for m in messages) // 4,
+        context_tokens=sum(len(m.get("content") or "") for m in messages) // 4,
     )
 
     if upstream_api == "anthropic":
@@ -622,7 +622,7 @@ def _entry_prompt_tokens(entry: RecordingEntry) -> int:
     recorded value and a char-based estimate so budgets always hold.
     """
     recorded = entry.prompt_tokens or 0
-    estimated = sum(len(m.get("content", "")) for m in entry.messages) // 4
+    estimated = sum(len(m.get("content") or "") for m in entry.messages) // 4
     return max(recorded, estimated)
 
 
@@ -780,7 +780,7 @@ async def _replay_task_entries(
     """Replay one task's entries sequentially, returning all metrics."""
     results: list[RequestMetrics] = []
     for entry in entries:
-        tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+        tokens = sum(len(m.get("content") or "") for m in entry.messages) // 4
 
         if model_context_length is not None and tokens > model_context_length:
             if on_complete:
@@ -1277,7 +1277,7 @@ async def _run_verbose(
                     tokens = sum(_message_content_len(m) for m in messages_to_send) // 4
                 else:
                     messages_to_send = entry.messages
-                    tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+                    tokens = sum(len(m.get("content") or "") for m in entry.messages) // 4
 
                 if model_context_length is not None and tokens > model_context_length:
                     state.phase = "decode"
@@ -1596,7 +1596,7 @@ async def _run_verbose_text(
                     tokens = sum(_message_content_len(m) for m in messages_to_send) // 4
                 else:
                     messages_to_send = entry.messages
-                    tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
+                    tokens = sum(len(m.get("content") or "") for m in entry.messages) // 4
 
                 if model_context_length is not None and tokens > model_context_length:
                     _log(
@@ -1844,7 +1844,7 @@ def _print_replay_dry_run(
     for task in scenario.tasks[:5]:
         c.print(f"\n  Task: {task.id} ({task.total_requests} requests)")
         for entry in task.entries[:3]:
-            tok = sum(len(m.get("content", "")) for m in entry.messages) // 4
+            tok = sum(len(m.get("content") or "") for m in entry.messages) // 4
             c.print(f"    [{entry.seq}] ~{tok:,} tokens, max_out={entry.max_tokens}")
         if task.total_requests > 3:
             c.print(f"    ... and {task.total_requests - 3} more")

@@ -32,7 +32,7 @@ def pad_messages_to_target(
     if target_tokens <= 0:
         return messages
 
-    current_chars = sum(len(m.get("content", "")) for m in messages)
+    current_chars = sum(len(m.get("content") or "") for m in messages)
     current_tokens = current_chars // 4
     if current_tokens >= target_tokens:
         return messages

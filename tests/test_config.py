@@ -276,3 +276,109 @@ def test_model_context_length_filters_scenarios():
 def test_model_context_length_all_filtered_empty():
     cfg = BenchmarkConfig(model_context_length=1)
     assert cfg.resolved_scenarios == []
+
+
+# ---------------------------------------------------------------------------
+# resolve_endpoint: non-standard version prefixes (v1beta, v2alpha, etc.)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_endpoint_v1beta_no_trailing_slash():
+    result = resolve_endpoint("http://localhost:8000/v1beta")
+    assert result == "http://localhost:8000/v1beta/chat/completions"
+
+
+def test_resolve_endpoint_v1beta_with_trailing_slash():
+    result = resolve_endpoint("http://localhost:8000/v1beta/")
+    assert result == "http://localhost:8000/v1beta/chat/completions"
+
+
+def test_resolve_endpoint_v2alpha():
+    result = resolve_endpoint("http://localhost:8000/v2alpha")
+    assert result == "http://localhost:8000/v2alpha/chat/completions"
+
+
+def test_resolve_endpoint_v1beta_openai():
+    result = resolve_endpoint("http://localhost:8000/v1beta/openai")
+    assert result == "http://localhost:8000/v1beta/openai/chat/completions"
+
+
+def test_resolve_endpoint_mid_path_v1_not_treated_as_version():
+    """A /v1/ mid-path (not at the end) should not trigger version detection."""
+    result = resolve_endpoint("http://localhost:8000/api/v1/endpoint")
+    assert result == (
+        "http://localhost:8000/api/v1/endpoint/v1/chat/completions"
+    )
+
+
+def test_resolve_endpoint_standard_cases_unchanged():
+    assert resolve_endpoint("http://localhost:8000") == (
+        "http://localhost:8000/v1/chat/completions"
+    )
+    assert resolve_endpoint("http://localhost:8000/v1") == (
+        "http://localhost:8000/v1/chat/completions"
+    )
+    url = "http://localhost:8000/v1/chat/completions"
+    assert resolve_endpoint(url) == url
+    gemini = (
+        "https://generativelanguage.googleapis.com"
+        "/v1beta/openai/chat/completions"
+    )
+    assert resolve_endpoint(gemini) == gemini
+
+
+# ---------------------------------------------------------------------------
+# Profile conflict warnings
+# ---------------------------------------------------------------------------
+
+
+def test_profile_conflict_warnings_suite_overrides_profile():
+    cfg = BenchmarkConfig(suite="quick", context_profile="medium")
+    warnings = cfg.profile_conflict_warnings()
+    assert len(warnings) == 1
+    assert "medium" in warnings[0]
+    assert "quick" in warnings[0]
+
+
+def test_profile_conflict_warnings_tokens_overrides_profile():
+    cfg = BenchmarkConfig(context_tokens=5000, context_profile="medium")
+    warnings = cfg.profile_conflict_warnings()
+    assert any("medium" in w and "5000" in w for w in warnings)
+
+
+def test_profile_conflict_warnings_tokens_overrides_suite():
+    cfg = BenchmarkConfig(context_tokens=5000, suite="quick")
+    warnings = cfg.profile_conflict_warnings()
+    assert any("quick" in w and "5000" in w for w in warnings)
+
+
+def test_profile_conflict_warnings_no_conflict():
+    cfg = BenchmarkConfig(suite="quick")
+    assert cfg.profile_conflict_warnings() == []
+
+
+# ---------------------------------------------------------------------------
+# Context token label rounding (sub-1000 tokens should say 1K, not 0K)
+# ---------------------------------------------------------------------------
+
+
+def test_context_tokens_below_1k_not_labeled_0k():
+    cfg = BenchmarkConfig(context_tokens=999)
+    scenarios = cfg.resolved_scenarios
+    assert len(scenarios) == 1
+    assert scenarios[0][1] == "1K"
+
+
+def test_context_tokens_1k_labeled_1k():
+    cfg = BenchmarkConfig(context_tokens=1000)
+    assert cfg.resolved_scenarios[0][1] == "1K"
+
+
+def test_context_tokens_1001_labeled_2k():
+    cfg = BenchmarkConfig(context_tokens=1001)
+    assert cfg.resolved_scenarios[0][1] == "2K"
+
+
+def test_context_tokens_500_labeled_1k():
+    cfg = BenchmarkConfig(context_tokens=500)
+    assert cfg.resolved_scenarios[0][1] == "1K"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -128,8 +129,7 @@ class RequestMetrics:
     def itl_p50(self) -> float:
         if not self.itl_ms:
             return 0.0
-        s = sorted(self.itl_ms)
-        return s[len(s) // 2]
+        return statistics.median(self.itl_ms)
 
     @property
     def itl_p95(self) -> float:
@@ -155,6 +155,7 @@ class RequestMetrics:
             "prefill_tok_per_sec": round(self.prefill_tok_per_sec, 2),
             "itl_p50_ms": round(self.itl_p50, 2),
             "itl_p95_ms": round(self.itl_p95, 2),
+            "itl_ms": [round(v, 2) for v in self.itl_ms],
             "error": self.error,
         }
         if self.thinking_tokens > 0:
@@ -322,6 +323,7 @@ class BenchmarkRun:
                     completion_tokens=r_data.get("completion_tokens", 0),
                     tok_per_sec=r_data.get("tok_per_sec", 0),
                     prefill_tok_per_sec=r_data.get("prefill_tok_per_sec", 0),
+                    itl_ms=r_data.get("itl_ms", []),
                     thinking_tokens=r_data.get("thinking_tokens", 0),
                     ttft_thinking_ms=r_data.get("ttft_thinking_ms", 0),
                     ttft_visible_ms=r_data.get("ttft_visible_ms", 0),

@@ -10,7 +10,9 @@ Scenario/Task data model used in replay mode.
 
 from __future__ import annotations
 
+import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -117,7 +119,7 @@ class BenchmarkConfig:
     def _resolve_profile_tokens(self) -> list[tuple[str, int]]:
         """Return list of (profile_name, token_count) pairs."""
         if self.context_tokens is not None:
-            label = f"{self.context_tokens // 1000}K"
+            label = f"{math.ceil(self.context_tokens / 1000)}K"
             return [(label, self.context_tokens)]
 
         if self.suite and self.suite in SUITE_CONFIGS:
@@ -129,6 +131,26 @@ class BenchmarkConfig:
             return [(p, CONTEXT_PROFILES[p])]
 
         return [(p, CONTEXT_PROFILES[p]) for p in REALISTIC_PROFILE_SEQUENCE]
+
+    def profile_conflict_warnings(self) -> list[str]:
+        """Return warnings for conflicting profile/suite/context-tokens flags."""
+        warnings: list[str] = []
+        if self.context_tokens is not None and self.context_profile:
+            warnings.append(
+                f"--context-profile '{self.context_profile}' ignored"
+                f" because --context-tokens {self.context_tokens} is set"
+            )
+        if self.context_tokens is not None and self.suite:
+            warnings.append(
+                f"--suite '{self.suite}' ignored"
+                f" because --context-tokens {self.context_tokens} is set"
+            )
+        if self.suite and self.context_profile and self.context_tokens is None:
+            warnings.append(
+                f"--context-profile '{self.context_profile}' ignored"
+                f" because --suite '{self.suite}' is set"
+            )
+        return warnings
 
     @classmethod
     def from_env(cls) -> BenchmarkConfig:
@@ -154,7 +176,7 @@ def resolve_endpoint(endpoint: str) -> str:
 
     If the URL already contains /chat/completions, use it as-is.
     Otherwise, append /v1/chat/completions (or just /chat/completions
-    if the path already contains a version segment like /v1beta/).
+    if the path ends with a version segment like /v1, /v1beta, etc.).
     """
     if not endpoint:
         raise ValueError("endpoint must be a non-empty URL")
@@ -164,7 +186,7 @@ def resolve_endpoint(endpoint: str) -> str:
         return endpoint
     if endpoint.endswith("/v1"):
         return endpoint + "/chat/completions"
-    if "/v1beta/" in endpoint or "/v1/" in endpoint:
+    if re.search(r"/v\d+[a-z]*\d*(/openai)?$", endpoint):
         return endpoint + "/chat/completions"
     return endpoint + "/v1/chat/completions"
 

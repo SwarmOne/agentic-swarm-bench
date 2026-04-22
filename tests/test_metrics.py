@@ -39,7 +39,7 @@ def test_request_metrics_succeeded():
 
 def test_itl_percentiles():
     m = RequestMetrics(itl_ms=[10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
-    assert m.itl_p50 == 60  # median of sorted list
+    assert m.itl_p50 == 55.0  # true median: (50+60)/2
     assert m.itl_p95 >= 90
 
 
@@ -218,7 +218,7 @@ def test_itl_single_element():
 
 def test_itl_two_elements():
     m = RequestMetrics(completion_tokens=2, itl_ms=[10.0, 90.0])
-    assert m.itl_p50 == 90.0  # sorted[1] (len//2 = 1)
+    assert m.itl_p50 == 50.0  # true median: (10+90)/2
     assert m.itl_p95 == 90.0
 
 
@@ -271,3 +271,74 @@ def test_to_dict_includes_thinking_fields_when_nonzero():
     assert d["ttft_thinking_ms"] == 100.0
     assert d["ttft_visible_ms"] == 500.0
     assert "thinking_overhead_ms" in d
+
+
+# ---------------------------------------------------------------------------
+# ITL data roundtrip (save/load) and correct median
+# ---------------------------------------------------------------------------
+
+
+def test_itl_roundtrip_via_save_load(tmp_path):
+    """Raw itl_ms data must survive a save->load cycle."""
+    run = BenchmarkRun(
+        model="test", endpoint="http://x", started_at="2026-04-22T00:00:00",
+    )
+    itl_data = [10.0, 15.0, 20.0, 25.0, 30.0, 50.0, 100.0]
+    m = RequestMetrics(
+        request_id=1, completion_tokens=200, tok_per_sec=44.4, itl_ms=itl_data,
+    )
+    sr = ScenarioResult(
+        num_users=1, context_profile="medium",
+        context_tokens=40000, wall_time_s=5.0,
+    )
+    sr.requests.append(m)
+    run.scenarios.append(sr)
+
+    path = str(tmp_path / "itl_run.json")
+    run.save(path)
+    loaded = BenchmarkRun.load(path)
+
+    m2 = loaded.scenarios[0].requests[0]
+    assert m2.itl_ms == itl_data
+    assert m2.itl_p50 == 25.0
+    assert m2.itl_p95 > 0
+
+
+def test_itl_ms_serialized_in_to_dict():
+    m = RequestMetrics(itl_ms=[1.0, 2.0, 3.0])
+    d = m.to_dict()
+    assert "itl_ms" in d
+    assert d["itl_ms"] == [1.0, 2.0, 3.0]
+
+
+def test_itl_ms_empty_roundtrip(tmp_path):
+    run = BenchmarkRun(model="t", endpoint="e", started_at="t")
+    m = RequestMetrics(request_id=1, completion_tokens=10, tok_per_sec=10.0)
+    sr = ScenarioResult(num_users=1, wall_time_s=1.0, requests=[m])
+    run.scenarios.append(sr)
+
+    path = str(tmp_path / "empty_itl.json")
+    run.save(path)
+    loaded = BenchmarkRun.load(path)
+    assert loaded.scenarios[0].requests[0].itl_ms == []
+
+
+def test_itl_p50_even_count_is_true_median():
+    import statistics
+
+    m = RequestMetrics(itl_ms=[10, 20, 30, 40])
+    assert m.itl_p50 == statistics.median([10, 20, 30, 40])
+    assert m.itl_p50 == 25.0
+
+
+def test_itl_p50_six_elements():
+    import statistics
+
+    m = RequestMetrics(itl_ms=[5, 10, 15, 20, 25, 30])
+    assert m.itl_p50 == statistics.median([5, 10, 15, 20, 25, 30])
+    assert m.itl_p50 == 17.5
+
+
+def test_itl_p50_odd_count():
+    m = RequestMetrics(itl_ms=[10, 20, 30])
+    assert m.itl_p50 == 20.0
