@@ -2,6 +2,16 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [4.0.3] - 2026-04-22
+
+### Added
+
+- **C++ build scenarios for 2 models.** Built-in benchmark recordings for
+  Firefox, LLVM+Firefox, and vLLM Docker tasks recorded with Claude Opus 4.6
+  and Gemma 4 31B.
+
+---
+
 ## [4.0.2] - 2026-04-22
 
 ### Fixed
