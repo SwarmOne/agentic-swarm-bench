@@ -2,6 +2,56 @@
 
 All notable changes to AgenticSwarmBench are documented here.
 
+## [4.0.2] - 2026-04-22
+
+### Fixed
+
+- **`asb replay --scenario` crashes on any built-in scenario.** Cache defeat functions (`compute_scenario_lcp`, `poison_task_execution`) were stubs returning no-op values, causing zero-length poisoning and downstream assertion failures. Replaced with working character-level LCP computation and deterministic text mutation (extra spaces, punctuation swaps, hash suffix).
+- **Streaming token count wrong when `usage` chunk is present.** `_send_streaming_request` in the direct runner now reads `completion_tokens` from the `usage` field when the server provides it, instead of always relying on chunk counting.
+- **Thinking token metrics missing for Anthropic models.** Replay now tracks `first_thinking_time`, `first_visible_time`, and `thinking_token_count` separately for Anthropic streaming responses.
+- **Dry-run prompt display adds spurious `...` even when not truncated.** The ellipsis is now only appended when the prompt text is actually truncated.
+- **`asb record --config` ignores YAML config file.** The `record` command now uses the same `_build_config_safe()` path as other commands, so `--config` YAML files are processed correctly.
+- **Percentile calculation floor-biased for even-length lists.** `_percentiles` now uses linear interpolation so p50 matches `statistics.median` for even-length inputs.
+- **Verbose display not updated when entries are skipped.** `_run_verbose` now explicitly updates the live display phase when entries are skipped due to `model_context_length`.
+- **Concurrency (`num_users`) always reported as 1.** `ScenarioResult` now receives the actual `max_concurrent` value.
+- **Opaque `RETRY_STREAM_OPTIONS` error.** The internal retry sentinel is now translated into a user-friendly message with resolution guidance.
+
+---
+
+## [4.0.1] - 2026-04-21
+
+### Fixed
+
+- **Dry-run crash.** LCP validation is skipped when `dry_run=True`.
+- **Raw tracebacks on user errors.** Friendly `click.UsageError` messages instead of stack traces for common input mistakes.
+- **Malformed JSONL lines crash the run.** Bad lines are now skipped with a warning instead of aborting.
+- **Gemini double-version in URL path.** `/v1beta/` and `/v1/` are now detected correctly.
+- **Empty endpoint not caught.** `ValueError` raised on empty/None endpoint input.
+- **Dry-run missing timestamp.** `started_at` is now set on dry-run `BenchmarkRun` objects.
+
+---
+
+## [4.0.0] - 2026-04-21
+
+### Summary
+
+Architecture overhaul: private features (advanced cache defeat, additional scheduling policies) are now modular plugins, and the public package gracefully degrades when they're absent. Added a CI pipeline that builds and publishes the public package automatically.
+
+### Added
+
+- **Modular plugin system.** Private features are loaded at runtime via `agentic_swarm_bench.modules` — the public package works without them, using built-in fallbacks.
+- **Thinking chunk capture in live history.** Thinking/reasoning chunks are now preserved in the live history replay path, enabling accurate thinking-token metrics.
+- **`interleaved_random` scheduling policy.** New policy that interleaves tasks from different scenarios while randomizing within each group.
+- **`cpp-builds-gemma-4-31b` built-in scenario.** C++ build benchmark recorded with Gemma 4 31B.
+- **CI publish pipeline.** GitHub Actions workflow that builds, tests, and pushes the public package on every tag.
+
+### Changed
+
+- **Cache defeat architecture.** Refactored from monolithic implementation to a plugin with a built-in character-level fallback.
+- **Scheduler architecture.** Additional scheduling policies are now loaded as plugins; `sequential`, `round_robin`, and `random` remain built-in.
+
+---
+
 ## [3.4.3] - 2026-04-20
 
 ### Added
