@@ -640,7 +640,8 @@ def list_tasks(tasks, tags, fmt):
     help="Upstream API format. Auto-detected from URL if not set "
     "(api.anthropic.com → anthropic, everything else → openai).",
 )
-def record(endpoint, model, api_key, api_key_header, port, output, upstream_api):
+@click.pass_context
+def record(ctx, endpoint, model, api_key, api_key_header, port, output, upstream_api):
     """Record a real coding session as a replayable scenario recording.
 
     \b
@@ -660,18 +661,25 @@ def record(endpoint, model, api_key, api_key_header, port, output, upstream_api)
         -k $ANTHROPIC_API_KEY --api-key-header x-api-key
       asb record -e http://localhost:8000 -m my-model -o session.jsonl
     """
-    import os as _os
-    endpoint = endpoint or _os.getenv("ASB_ENDPOINT") or ""
-    model = model or _os.getenv("ASB_MODEL") or ""
-    _require_endpoint_model(endpoint, model)
+    cfg = _build_config_safe(
+        config_file=ctx.obj.get("config_file"),
+        cli_args={
+            "endpoint": endpoint,
+            "model": model,
+            "api_key": api_key or None,
+            "api_key_header": api_key_header,
+        },
+    )
+
+    _require_endpoint_model(cfg.endpoint, cfg.model)
 
     from agentic_swarm_bench.scenarios.recorder import run_recorder
 
     run_recorder(
-        upstream_url=endpoint,
-        model=model,
-        api_key=api_key,
-        api_key_header=api_key_header,
+        upstream_url=cfg.endpoint,
+        model=cfg.model,
+        api_key=cfg.api_key,
+        api_key_header=cfg.api_key_header,
         port=port,
         output_file=output,
         upstream_api=upstream_api,

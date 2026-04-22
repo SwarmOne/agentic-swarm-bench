@@ -117,6 +117,7 @@ async def _send_streaming_request(
     last_token_time = start
     token_count = 0
     thinking_count = 0
+    usage_completion_tokens: int | None = None
 
     host_for_errors = urlparse(url).hostname or url
     try:
@@ -150,6 +151,8 @@ async def _send_streaming_request(
                 usage = chunk.get("usage")
                 if usage:
                     metrics.prompt_tokens = usage.get("prompt_tokens", 0)
+                    if "completion_tokens" in usage:
+                        usage_completion_tokens = usage["completion_tokens"]
 
                 for choice in chunk.get("choices", []):
                     delta = choice.get("delta", {})
@@ -197,13 +200,18 @@ async def _send_streaming_request(
 
     end = time.perf_counter()
     metrics.total_time_s = end - start
-    metrics.completion_tokens = token_count
+
+    if usage_completion_tokens is not None:
+        metrics.completion_tokens = usage_completion_tokens
+    else:
+        metrics.completion_tokens = token_count
     metrics.thinking_tokens = thinking_count
 
-    if token_count > 0 and first_token_time is not None:
+    effective_tokens = metrics.completion_tokens
+    if effective_tokens > 0 and first_token_time is not None:
         metrics.decode_time_s = end - first_token_time
         if metrics.decode_time_s > 0:
-            metrics.tok_per_sec = token_count / metrics.decode_time_s
+            metrics.tok_per_sec = effective_tokens / metrics.decode_time_s
 
     if metrics.ttft_ms > 0 and metrics.prompt_tokens > 0:
         prefill_s = metrics.ttft_ms / 1000
@@ -788,7 +796,8 @@ def _print_dry_run(
 
     console.print(f"\n  [{DIM}]Tasks ({len(tasks)}):[/{DIM}]")
     for t in tasks[:5]:
-        console.print(f"    [{DIM}]{t['id']}[/{DIM}]  {t['prompt'][:55]}…")
+        prompt_preview = t['prompt'][:55] + ('…' if len(t['prompt']) > 55 else '')
+        console.print(f"    [{DIM}]{t['id']}[/{DIM}]  {prompt_preview}")
     if len(tasks) > 5:
         console.print(f"    [{DIM}]…and {len(tasks) - 5} more[/{DIM}]")
 

@@ -524,14 +524,13 @@ def _methodology_section(run: BenchmarkRun) -> str:
     if not _cache_section_done:
         lines.extend(
             [
-                "### Cache defeat via pre-processed recordings\n",
+                "### Cache defeat\n",
                 (
-                    "Cold-start measurements use pre-processed recordings "
-                    "with punctuation and capitalization variations that "
-                    "shift BPE token boundaries, invalidating the KV "
-                    "prefix cache without altering semantic content. "
-                    "Each recording receives a unique treatment to ensure "
-                    "cache invalidation across repetitions.\n"
+                    "Cold-start measurements apply deterministic text "
+                    "variations (extra spaces, punctuation changes, unique "
+                    "suffixes) seeded per execution to ensure each request "
+                    "sends different bytes, invalidating the KV prefix "
+                    "cache without altering semantic content.\n"
                 ),
             ]
         )

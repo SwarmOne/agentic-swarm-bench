@@ -372,6 +372,12 @@ async def _replay_one_request(
                 continue
         break
 
+    if metrics.error == "RETRY_STREAM_OPTIONS":
+        metrics.error = (
+            "HTTP 400: server rejected stream_options. "
+            "Retry with --extra-body '{\"stream_options\":null}' or increase --max-retries."
+        )
+
     end = time.perf_counter()
     metrics.total_time_s = end - start
 
@@ -455,7 +461,8 @@ async def _replay_one_request_anthropic(
 
     def _parse_sse_line(line: str):
         """Parse one SSE data line, updating nonlocal metrics state."""
-        nonlocal first_token_time, last_token_time, token_count
+        nonlocal first_token_time, first_thinking_time, first_visible_time
+        nonlocal last_token_time, token_count, thinking_token_count
 
         if not line.startswith("data: "):
             return
@@ -479,12 +486,14 @@ async def _replay_one_request_anthropic(
         elif event_type == "content_block_delta":
             delta = data_obj.get("delta", {})
             text = None
+            is_thinking = False
             if delta.get("type") == "text_delta":
                 text = delta.get("text")
                 if text and response_chunks is not None:
                     response_chunks.append(text)
             elif delta.get("type") == "thinking_delta":
                 text = delta.get("thinking")
+                is_thinking = True
                 if text and thinking_chunks is not None:
                     thinking_chunks.append(text)
             if text:
@@ -498,6 +507,15 @@ async def _replay_one_request_anthropic(
                 last_token_time = now
                 token_count += chunk_tokens
 
+                if is_thinking:
+                    thinking_token_count += chunk_tokens
+                    if first_thinking_time is None:
+                        first_thinking_time = now
+                        metrics.ttft_thinking_ms = (now - start) * 1000
+                if not is_thinking and first_visible_time is None:
+                    first_visible_time = now
+                    metrics.ttft_visible_ms = (now - start) * 1000
+
         elif event_type == "message_delta":
             usage = data_obj.get("usage", {})
             if usage.get("output_tokens"):
@@ -506,8 +524,11 @@ async def _replay_one_request_anthropic(
     for attempt in range(max_retries + 1):
         start = time.perf_counter()
         first_token_time = None
+        first_thinking_time = None
+        first_visible_time = None
         last_token_time = start
         token_count = 0
+        thinking_token_count = 0
         metrics.itl_ms = []
         metrics.error = None
 
@@ -559,6 +580,7 @@ async def _replay_one_request_anthropic(
     end = time.perf_counter()
     metrics.total_time_s = end - start
     metrics.completion_tokens = token_count
+    metrics.thinking_tokens = thinking_token_count
 
     if token_count > 0 and first_token_time is not None:
         metrics.decode_time_s = end - first_token_time
@@ -1103,7 +1125,7 @@ async def replay_scenario(
     for bucket_label, results in buckets.items():
         max_ctx = max((m.context_tokens for m in results), default=0)
         scenario_result = ScenarioResult(
-            num_users=1,
+            num_users=j,
             context_profile=bucket_label,
             context_tokens=max_ctx,
             wall_time_s=_compute_bucket_wall_time(results),
@@ -1266,6 +1288,8 @@ async def _run_verbose(
                     tokens = sum(len(m.get("content", "")) for m in entry.messages) // 4
 
                 if model_context_length is not None and tokens > model_context_length:
+                    state.phase = "decode"
+                    live.update(_build_verbose_display(recording_states))
                     continue
 
                 response_chunks: list[str] | None = [] if use_live_history else None

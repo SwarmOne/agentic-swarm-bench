@@ -22,15 +22,22 @@ _CONTEXT_LENGTH_PATTERNS = [
 
 
 def _percentiles(values: list[float]) -> dict:
-    """Compute p50/p95/p99 + min/max/mean; all fields are always present."""
+    """Compute p50/p95/p99 + min/max/mean; all fields are always present.
+
+    Uses linear interpolation for percentiles so that p50 matches
+    ``statistics.median`` (averages the two middle values for even n).
+    """
     if not values:
         return {"count": 0, "p50": 0, "p95": 0, "p99": 0, "min": 0, "max": 0, "mean": 0}
     s = sorted(values)
     n = len(s)
 
     def pct(p: float) -> float:
-        idx = min(n - 1, max(0, int(p * n)))
-        return round(s[idx], 2)
+        rank = p * (n - 1)
+        lo = int(rank)
+        hi = min(lo + 1, n - 1)
+        frac = rank - lo
+        return round(s[lo] + (s[hi] - s[lo]) * frac, 2)
 
     mean = round(sum(s) / n, 2)
     return {
