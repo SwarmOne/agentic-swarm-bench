@@ -25,9 +25,8 @@ def pad_messages_to_target(
     Prepends padding to the existing system message (or inserts one) so
     the message structure stays valid for the downstream model.
 
-    When defeat_cache is True and a cache-defeat extension is installed,
-    applies token-boundary perturbation to the padding to break prefix
-    caching. Otherwise padding is inserted verbatim.
+    When defeat_cache is True, the padding may be varied to reduce
+    prefix cache hits.
     """
     if target_tokens <= 0:
         return messages

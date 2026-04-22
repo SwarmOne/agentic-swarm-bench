@@ -507,11 +507,12 @@ def _methodology_section(run: BenchmarkRun) -> str:
             [
                 "### Cache defeat\n",
                 (
-                    "Cold-start measurements apply deterministic text "
-                    "variations (extra spaces, punctuation changes, unique "
-                    "suffixes) seeded per execution to ensure each request "
-                    "sends different bytes, invalidating the KV prefix "
-                    "cache without altering semantic content.\n"
+                    "Built-in scenarios ship with pre-poisoned recordings. "
+                    "Each task's recording has a unique text treatment "
+                    "applied offline that invalidates the KV prefix cache "
+                    "without altering semantic content. Results are valid "
+                    "for one pass per task; additional repetitions may "
+                    "benefit from cache hits.\n"
                 ),
             ]
         )

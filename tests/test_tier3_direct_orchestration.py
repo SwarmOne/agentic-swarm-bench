@@ -8,55 +8,7 @@ import pytest
 
 from agentic_swarm_bench.config import BenchmarkConfig
 from agentic_swarm_bench.metrics.collector import BenchmarkRun, RequestMetrics, ScenarioResult
-from agentic_swarm_bench.runner.direct import _get_cache_passes, _save_outputs, run_speed_benchmark
-
-# ---------------------------------------------------------------------------
-# _get_cache_passes
-# ---------------------------------------------------------------------------
-
-
-def test_allcold_cache_defeats():
-    passes = _get_cache_passes("allcold")
-    assert passes == [("allcold", True)]
-
-
-def test_allwarm_cache_no_defeat():
-    passes = _get_cache_passes("allwarm")
-    assert passes == [("allwarm", False)]
-
-
-def test_realistic_cache_returns_two_passes():
-    passes = _get_cache_passes("realistic")
-    assert len(passes) == 2
-    labels = {p[0] for p in passes}
-    defeats = {p[1] for p in passes}
-    assert "allcold" in labels
-    assert "allwarm" in labels
-    assert True in defeats
-    assert False in defeats
-
-
-def test_unknown_cache_mode_defaults_allcold():
-    passes = _get_cache_passes("unknown")
-    assert passes == [("allcold", True)]
-
-
-# Backward-compat aliases (old names from YAML configs pre-rename)
-
-def test_old_cold_alias():
-    assert _get_cache_passes("cold") == [("allcold", True)]
-
-
-def test_old_warm_alias():
-    assert _get_cache_passes("warm") == [("allwarm", False)]
-
-
-def test_old_both_alias():
-    passes = _get_cache_passes("both")
-    assert len(passes) == 2
-    assert ("allcold", True) in passes
-    assert ("allwarm", False) in passes
-
+from agentic_swarm_bench.runner.direct import _save_outputs, run_speed_benchmark
 
 # ---------------------------------------------------------------------------
 # run_speed_benchmark: SystemExit(1) on empty resolved_scenarios

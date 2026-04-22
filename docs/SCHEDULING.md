@@ -90,9 +90,6 @@ have been evicted from L1 (pushed out by other users' prefills) but
 should still be in L2. The gap between a user's turns makes L1 eviction
 more likely than with `sequential` or `round_robin`.
 
-Poisoning is unaffected: each task execution `(task.id, execution_index)`
-still has a fixed poison mask. The interleaving only changes the **order**
-requests are sent, not **which** bytes get poisoned.
 
 **Implementation**: `build_interleaved_order` maintains a cursor per
 task execution and repeatedly picks a random one to emit its next
@@ -182,8 +179,3 @@ the session; reusing one client across many schedule-tasks on the same
 slot matches that. Using a fresh client per schedule-task, as the old
 code did, injects a TLS handshake into every measurement.
 
-**Is poison content affected by ordering?**
-No. Poisoning is keyed by `(task.id, execution_index)`, not by
-dispatch order. Shuffling changes who-runs-when; the bytes on the wire
-for `(tX, r_i)` are identical regardless of where that schedule-task
-ends up in `L`.

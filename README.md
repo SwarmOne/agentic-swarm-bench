@@ -51,8 +51,7 @@ When Claude Code opens a file, reads 2,000 lines, edits three functions, runs te
 | **Three benchmark modes**      | Record/replay (your real sessions), speed (synthetic load), agent (real multi-turn) - plus reporting and comparison                                                                                                    |
 | **Agentic swarm context**      | Pads requests with real-looking agentic sessions - system prompts with tool definitions, prior conversation turns, code files, tool call results, error traces                                                         |
 | **Growing context simulation** | Profiles simulate how context grows during a real coding session: fresh (6K) → short (20K) → medium (40K) → long (70K) → full (100K) → xl (200K) → xxl (400K)                                                          |
-| **Prefix cache poisoning**     | Pre-processed recordings with varied punctuation and capitalization break prefix caching without adding artificial content, ensuring true cold-start measurements                                                       |
-| **Cache impact measurement**   | `--cache-mode realistic` runs allcold + allwarm to show exact prefix cache speedup (10x cost difference on Anthropic)                                                                                                  |
+| **Prefix cache poisoning**     | Built-in scenarios ship with pre-poisoned recordings that break prefix caching without adding artificial content, ensuring valid cold-start measurements for one pass per task                                           |
 | **Reasoning token detection**  | Automatically detects thinking/reasoning tokens (DeepSeek R1, o3, Claude Extended Thinking) and reports thinking overhead vs visible output latency                                                                    |
 | **110 agentic swarm tasks**    | 5 difficulty tiers, 5 languages (Python, TypeScript, Rust, Go, SQL) - from single-function fixes to full-stack refactors                                                                                               |
 | **Docker one-liner**           | Point at any vLLM / SGLang / TGI / OpenAI-compatible endpoint and go                                                                                                                                                   |
@@ -279,7 +278,7 @@ asb replay \
   --scenario ./scenarios/my-scenario/ \
   --repetitions 3 --max-concurrent 5 --policy sequential
 
-# Default: realistic cache mode (shared prefix preserved, user context poisoned)
+# Replay a built-in scenario (recordings include cache-defeat treatments)
 asb replay -e URL -m MODEL --scenario scenario
 
 # Preview without sending requests
@@ -291,7 +290,7 @@ asb replay -e URL -m MODEL --scenario session.jsonl --slice-tokens 1000000
 
 **Scheduling:** Control how tasks execute with `--repetitions`, `--max-concurrent`, and `--policy` (round_robin, sequential).
 
-**Cache mode:** The default (`--cache-mode realistic`) preserves the shared prefix so it can be KV-cached, but poisons each user's unique context so it doesn't. Use `--cache-mode allwarm` for all-cached (optimistic) numbers or `--cache-mode allcold` to defeat caching entirely. See [Prefix Cache Poisoning](#prefix-cache-poisoning) for how this works.
+**Cache defeat:** Built-in scenarios include cache-defeat treatments in their recordings. Results are valid for one pass per task. User-recorded scenarios (`asb record` output) replay as-is with no cache-defeat treatment. See [Prefix Cache Poisoning](#prefix-cache-poisoning) for details.
 
 **History mode:** The default (`--history-mode live`) captures the server's actual responses during streaming and feeds them into the next turn's conversation history. This is essential for correct prefix-cache measurement when replaying against a model different from the one that made the recording - without it, recorded assistant messages from the original model cause KV-cache prefix mismatches on every turn. Use `--history-mode recorded` for the legacy behavior of sending each entry's recorded messages verbatim.
 
@@ -507,40 +506,13 @@ This is useful when running suites or `realistic` sweeps against models with dif
 
 LLM inference engines cache the KV state of common prefixes so repeated requests skip prefill. This makes benchmarks look artificially fast - you're measuring cache hits, not real inference.
 
-AgenticSwarmBench defeats the prefix cache using **pre-processed recordings** with varied punctuation and capitalization treatments. Each recording receives a unique transformation that shifts BPE token boundaries, invalidating the KV cache without altering the semantic content the model sees.
+AgenticSwarmBench defeats the prefix cache using **pre-poisoned recordings**. Each task in a built-in scenario has a unique text treatment applied offline that invalidates the KV cache without altering the semantic content the model sees.
 
 This mimics what actually happens in real coding sessions: when an agent edits a file mid-conversation, the context changes from the edit point onward, breaking the cache naturally.
 
-- **`asb replay`**: Each recording has pre-applied cache-defeat treatments. Different repetitions use different recordings to ensure cache invalidation across runs.
+- **Built-in scenarios** ship with pre-poisoned recordings. Each task has a unique treatment, so results are valid for one pass per task.
+- **User-recorded scenarios** (`asb record` output) replay as-is with no cache-defeat treatment.
 
-### Controlling cache behavior
-
-Both `asb speed` and `asb replay` accept `--cache-mode` with three options:
-
-| Mode        | What it does                                                                                                                         |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `allcold`   | Every request defeats the KV cache. Measures true cold-start latency. Default for `asb speed`.                                       |
-| `allwarm`   | No poisoning - requests arrive as-is and the server can cache freely. Measures best-case latency.                                    |
-| `realistic` | Preserves the shared prefix (system prompt) so it can be cached; poisons only the unique per-user portion. Default for `asb replay`. |
-
-```bash
-# speed: default is allcold (true cold-start numbers)
-asb speed -e URL -m MODEL
-
-# speed: measure both extremes in one run
-asb speed -e URL -m MODEL --cache-mode realistic
-
-# speed: best-case cached numbers
-asb speed -e URL -m MODEL --cache-mode allwarm
-
-# replay: default is realistic (production-accurate)
-asb replay -e URL -m MODEL --scenario scenario
-
-# replay: all-cached (optimistic upper bound)
-asb replay -e URL -m MODEL --scenario scenario --cache-mode allwarm
-```
-
-`--cache-mode realistic` on `asb speed` runs each scenario twice (allcold then allwarm) and reports both. Anthropic charges 10x less for cached tokens ($0.30 vs $3.00/M), so knowing your cache hit rate matters.
 
 ## Reasoning Token Detection
 

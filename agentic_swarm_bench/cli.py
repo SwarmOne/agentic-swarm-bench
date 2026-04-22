@@ -16,6 +16,7 @@ from agentic_swarm_bench.config import (
 
 _HAS_SCHEDULER = False
 _HAS_EVALUATOR = False
+_HAS_CACHE_DEFEAT = False
 
 _POLICY_CHOICES = ["round_robin", "sequential"]
 if _HAS_SCHEDULER:
@@ -85,10 +86,10 @@ def _reject_users_flag(value):
         return value
     raise click.UsageError(
         "`--users` was removed from `asb replay`: it made every 'user' send "
-        "byte-identical poisoned payloads, so only user 0 did real prefill "
-        "work and users 1..N-1 rode the KV cache for free. "
+        "identical requests, so only user 0 did real prefill work and "
+        "users 1..N-1 rode the KV cache for free. "
         "Use `--repetitions N --max-concurrent N` for N concurrent "
-        "executions, each with a distinct poison seed."
+        "executions, each with a distinct seed."
     )
 
 
@@ -244,6 +245,7 @@ def main(ctx, config):
     "--cache-mode",
     type=click.Choice(["allcold", "allwarm", "realistic"]),
     default=None,
+    hidden=not _HAS_CACHE_DEFEAT,
     help="Cache mode: allcold (defeat cache), allwarm (allow cache), realistic (both passes)",
 )
 @click.option(
@@ -645,6 +647,10 @@ def record(ctx, endpoint, model, api_key, api_key_header, port, output, upstream
     (no translation) while still saving in OpenAI format for replay.
 
     \b
+    Note: Recordings replay as-is. Built-in scenarios include cache-defeat
+    treatments; user recordings do not.
+
+    \b
     Examples:
       asb record -e http://localhost:8000 -m my-model
       asb record -e https://api.anthropic.com -m claude-sonnet-4-20250514 \\
@@ -801,9 +807,10 @@ def record(ctx, endpoint, model, api_key, api_key_header, port, output, upstream
     type=click.Choice(["realistic", "allcold", "allwarm"]),
     default="realistic",
     show_default=True,
+    hidden=not _HAS_CACHE_DEFEAT,
     help=(
-        "Cache mode: realistic (poison non-shared prefix, default), "
-        "allcold (poison everything), allwarm (no poisoning)"
+        "Cache mode: realistic (vary non-shared prefix, default), "
+        "allcold (vary everything), allwarm (no cache defeat)"
     ),
 )
 @click.option(
@@ -900,14 +907,9 @@ def replay(
       anthropic         Translate recordings to Anthropic Messages API
 
     \b
-    Cache modes:
-      realistic  Poison the per-user portion of each request (default).
-                 Shared prefix is preserved so it can be KV-cached;
-                 unique user context is varied to defeat caching there.
-      allcold    Poison all messages including shared prefix. Every
-                 request defeats the cache entirely.
-      allwarm    No poisoning. Requests sent as recorded; the server
-                 can serve from KV cache freely.
+    Cache defeat:
+      Built-in scenarios ship with pre-poisoned recordings for cache
+      defeat.  User-recorded scenarios replay as-is.
 
     \b
     History modes:

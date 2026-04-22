@@ -108,21 +108,12 @@ def test_speed_old_cache_mode_cold_rejected():
     assert result.exit_code != 0
 
 
-@pytest.mark.parametrize("mode", ["realistic", "allcold", "allwarm"])
-def test_replay_cache_mode_in_help(mode):
-    """All three cache modes must appear in replay --help."""
-    result = RUNNER.invoke(main, ["replay", "--help"])
-    assert result.exit_code == 0
-    assert mode in result.output
-
-
 def test_replay_users_flag_rejected_with_migration_hint():
     """`--users N` on replay must hard-fail with a message pointing to --repetitions.
 
-    The flag was removed because all N "users" sent byte-identical poisoned
-    payloads, so users 1..N-1 rode the KV cache for free and cache hit-rate
-    was artificially inflated. We keep it hidden just to produce a precise
-    error instead of Click's generic "no such option".
+    The flag was removed because all N "users" sent identical requests,
+    so users 1..N-1 rode the KV cache for free. We keep it hidden just
+    to produce a precise error instead of Click's generic "no such option".
     """
     result = RUNNER.invoke(
         main,

@@ -19,14 +19,8 @@ Upstream API modes:
   anthropic  Translate recorded OpenAI messages to Anthropic Messages API
              format, stream via /v1/messages, and parse Anthropic SSE.
 
-Cache modes:
-  realistic  Poison only the non-shared portion of each request. The LCP
-             (longest common prefix) across tasks is preserved so the
-             server can cache it; everything beyond the LCP is varied per
-             execution to simulate unique user context. This is the default.
-  allcold    Poison all messages (lcp_len=0) so every request defeats the
-             KV cache entirely.
-  allwarm    No poisoning. Requests are sent exactly as recorded.
+Built-in scenarios ship with pre-poisoned recordings for cache defeat.
+User-recorded scenarios replay as-is.
 """
 
 from __future__ import annotations
@@ -54,7 +48,6 @@ from agentic_swarm_bench.metrics.collector import (
     is_context_length_error,
 )
 from agentic_swarm_bench.metrics.stats import analyze_scenario
-from agentic_swarm_bench.scenarios.poison import compute_scenario_lcp, poison_task_execution
 from agentic_swarm_bench.scenarios.registry import (
     RecordingEntry,
     Scenario,
@@ -941,9 +934,8 @@ async def replay_scenario(
       to the configured endpoint).
 
     cache_mode:
-      realistic  Preserve shared LCP, poison divergent per-user portion (default).
-      allcold    Poison everything (lcp_len=0), every request defeats the cache.
-      allwarm    No poisoning, requests sent as recorded.
+      Controls cache-defeat behavior for replay runs.
+      Built-in scenarios ship with pre-poisoned recordings.
 
     history_mode:
       live       Build conversation from actual server responses so the
@@ -974,31 +966,8 @@ async def replay_scenario(
 
     sliced_tasks = _apply_slice_to_tasks(scenario.tasks, slice_tokens)
     raw_queue = build_execution_queue(sliced_tasks, schedule)
-    # poison_task_execution uses (task.id, execution_index) for its RNG seed, so
-    # poison output is stable regardless of queue order. Shuffling later is
-    # purely about dispatch order, not about which bytes get sent.
+    execution_queue = raw_queue
 
-    if config.dry_run:
-        execution_queue = raw_queue
-    elif cache_mode == "realistic":
-        lcp_len = compute_scenario_lcp(sliced_tasks)
-        if scenario.min_lcp_length is not None and lcp_len < scenario.min_lcp_length:
-            raise ValueError(
-                f"Computed LCP ({lcp_len} chars) is below scenario minimum "
-                f"({scenario.min_lcp_length} chars). Tasks may not share enough "
-                f"common prefix for realistic cache simulation."
-            )
-        execution_queue = [
-            (poison_task_execution(task, lcp_len, exec_idx), exec_idx)
-            for task, exec_idx in raw_queue
-        ]
-    elif cache_mode == "allcold":
-        execution_queue = [
-            (poison_task_execution(task, lcp_len=0, execution_index=exec_idx), exec_idx)
-            for task, exec_idx in raw_queue
-        ]
-    else:
-        execution_queue = raw_queue
 
     total_task_executions = len(execution_queue)
     total_entries = sum(t.total_requests for t, _exec_idx in execution_queue)
@@ -1018,12 +987,6 @@ async def replay_scenario(
     if total_task_executions != len(scenario.tasks):
         con.print(_schedule_line(schedule))
         con.print(f"  Total executions: {total_task_executions} tasks")
-    cache_mode_labels = {
-        "realistic": "[yellow]realistic[/yellow] (shared prefix cached, unique context poisoned)",
-        "allcold": "[red]allcold[/red] (all requests defeat cache)",
-        "allwarm": "[green]allwarm[/green] (no poisoning, cache allowed)",
-    }
-    con.print(f"  Cache mode: {cache_mode_labels.get(cache_mode, cache_mode)}")
     history_mode_labels = {
         "live": "[green]live[/green] (actual server responses feed next turn)",
         "recorded": "[yellow]recorded[/yellow] (verbatim recorded messages)",
