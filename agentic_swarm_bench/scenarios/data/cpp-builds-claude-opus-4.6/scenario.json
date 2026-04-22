@@ -1,0 +1,23 @@
+{
+  "name": "cpp-builds-claude-opus-4.6",
+  "description": "C++ build scenarios (Firefox, LLVM+Firefox, vLLM Docker 125M) recorded with Claude Opus 4.6 via Anthropic API",
+  "model": "claude-opus-4-6-20250415",
+  "min_lcp_length": 12000,
+  "tasks": [
+    {
+      "id": "cpp-build-firefox",
+      "name": "Download and build Firefox",
+      "recording": "cpp-build-firefox.jsonl"
+    },
+    {
+      "id": "cpp-llvm-then-firefox",
+      "name": "Build LLVM then Firefox with custom Clang",
+      "recording": "cpp-llvm-then-firefox.jsonl"
+    },
+    {
+      "id": "cpp-vllm-docker-125m",
+      "name": "Docker container running vLLM with 125M model",
+      "recording": "cpp-vllm-docker-125m.jsonl"
+    }
+  ]
+}

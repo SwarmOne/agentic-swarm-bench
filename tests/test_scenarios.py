@@ -156,23 +156,9 @@ def test_list_builtin_scenarios():
     assert isinstance(scenarios, list)
     assert len(scenarios) >= 2
     names = {s["name"] for s in scenarios}
-    assert "js-coding-opus" in names
     assert "trivial-qa" in names
 
 
-def test_builtin_js_coding_opus():
-    s = get_scenario("js-coding-opus")
-    assert s.name == "js-coding-opus"
-    assert s.model == "claude-opus-4-6"
-    assert len(s.tasks) == 5
-    task_ids = {t.id for t in s.tasks}
-    assert task_ids == {
-        "build-rest-api", "csv-parser-cli", "websocket-chat",
-        "markdown-renderer", "state-machine",
-    }
-    for task in s.tasks:
-        assert task.total_requests >= 2
-        assert len(task.entries[0].messages) >= 2
 
 
 def test_builtin_trivial_qa():
@@ -187,10 +173,6 @@ def test_builtin_trivial_qa():
         assert task.entries[0].messages[1]["role"] == "user"
 
 
-def test_builtin_js_coding_opus_task_filter():
-    s = get_scenario("js-coding-opus", task_filter="build-rest-api")
-    assert len(s.tasks) == 1
-    assert s.tasks[0].id == "build-rest-api"
 
 
 def test_empty_scenario_file(tmp_path):

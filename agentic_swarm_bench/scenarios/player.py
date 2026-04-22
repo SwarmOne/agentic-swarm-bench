@@ -397,6 +397,78 @@ async def _replay_one_request(
     return metrics
 
 
+def _openai_msgs_to_anthropic(messages: list[dict]) -> tuple[list[str], list[dict]]:
+    """Convert OpenAI-format messages to Anthropic conversation format.
+
+    Returns (system_parts, conversation):
+      system_parts  — strings to join into the top-level ``system`` field.
+      conversation  — Anthropic ``messages`` list with proper content blocks.
+
+    OpenAI role mapping:
+      "system"    → extracted to system_parts (not in messages list)
+      "user"      → {"role": "user", "content": str}
+      "assistant" → text + tool_use blocks when tool_calls present
+      "tool"      → accumulated and emitted as a user message with
+                    tool_result content blocks, one per tool call result
+    """
+    system_parts: list[str] = []
+    conversation: list[dict] = []
+    pending_tool_results: list[dict] = []
+
+    def flush_tool_results() -> None:
+        if not pending_tool_results:
+            return
+        conversation.append({"role": "user", "content": list(pending_tool_results)})
+        pending_tool_results.clear()
+
+    for msg in messages:
+        role = msg.get("role", "user")
+
+        if role == "system":
+            system_parts.append(msg.get("content", ""))
+            continue
+
+        if role == "tool":
+            result_content = _strip_cache_control(msg.get("content", ""))
+            pending_tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": msg.get("tool_call_id", ""),
+                "content": result_content,
+            })
+            continue
+
+        flush_tool_results()
+
+        if role == "assistant":
+            text = _strip_cache_control(msg.get("content", "") or "")
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                conversation.append({"role": "assistant", "content": text})
+            else:
+                blocks: list[dict] = []
+                if text:
+                    blocks.append({"type": "text", "text": text})
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    try:
+                        tool_input = json.loads(fn.get("arguments", "{}"))
+                    except (json.JSONDecodeError, ValueError):
+                        tool_input = {"raw": fn.get("arguments", "")}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": fn.get("name", ""),
+                        "input": tool_input,
+                    })
+                conversation.append({"role": "assistant", "content": blocks})
+        else:
+            content = _strip_cache_control(msg.get("content", ""))
+            conversation.append({"role": "user", "content": content})
+
+    flush_tool_results()
+    return system_parts, conversation
+
+
 async def _replay_one_request_anthropic(
     client: httpx.AsyncClient,
     url: str,
@@ -423,15 +495,7 @@ async def _replay_one_request_anthropic(
     When *thinking_chunks* is provided, thinking content from thinking_delta
     events is appended for assistant history reconstruction.
     """
-    system_parts: list[str] = []
-    conversation: list[dict] = []
-    for msg in messages:
-        if msg.get("role") == "system":
-            system_parts.append(msg.get("content", ""))
-        else:
-            role = msg.get("role", "user")
-            content = _strip_cache_control(msg.get("content", ""))
-            conversation.append({"role": role, "content": content})
+    system_parts, conversation = _openai_msgs_to_anthropic(messages)
 
     if not conversation:
         conversation.append({"role": "user", "content": ""})
